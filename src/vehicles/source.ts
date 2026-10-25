@@ -17,11 +17,11 @@ const BBOX: { minLat: number; minLon: number; maxLat: number; maxLon: number } |
   maxLon: 5.5,
 };
 
-// TODO: copy the exact query and BoundingBox input type from the spike's capture.mjs.
+/** The spike's query, trimmed to what we parse, plus `destinationName` (in the live schema). */
 const QUERY = /* GraphQL */ `
-  subscription Vehicles($boundingBox: BoundingBox) {
-    vehicles(boundingBox: $boundingBox) {
-      vehicleId lastUpdated bearing vehicleStatus mode delay destinationName
+  subscription Vehicles($bbox: BoundingBox) {
+    vehicles(boundingBox: $bbox) {
+      vehicleId mode vehicleStatus lastUpdated bearing delay destinationName
       location { latitude longitude }
       line { publicCode }
     }
@@ -46,7 +46,7 @@ export const vehicleSource: VehicleSource = (onReports) => {
   // follows is fine: the store dedupes and hides them.
   const client = createClient({ url: URL, retryAttempts: Infinity, shouldRetry: () => true });
   const unsubscribe = client.subscribe<{ vehicles: WireVehicle[] }>(
-    { query: QUERY, variables: { boundingBox: BBOX } },
+    { query: QUERY, variables: { bbox: BBOX } },
     {
       next: (msg) => {
         const reports = (msg.data?.vehicles ?? []).flatMap(parseVehicle);
@@ -64,17 +64,38 @@ export const vehicleSource: VehicleSource = (onReports) => {
 
 /** Wire to domain. Drops a record missing id, time or position. Returns [] or [report] for flatMap. */
 function parseVehicle(w: WireVehicle): VehicleReport[] {
-  // TODO:
-  // recordedAt = Date.parse(w.lastUpdated); lat/lon finite; vehicleId non-empty, else return []
-  // id = w.vehicleId as VehicleId   (the one cast that mints a VehicleId)
-  // bearing = finite w.bearing ? ((w.bearing % 360) + 360) % 360 : null
-  // journeyEnded = w.vehicleStatus === "COMPLETED" || w.vehicleStatus === "CANCELLED"  (null → alive)
-  // mode = parseMode(w.mode)
-  // journey = w.line?.publicCode ? { line, destination: w.destinationName ?? null, delaySeconds: w.delay ?? null } : null
-  throw new Error("not implemented");
+  const recordedAt = Date.parse(w.lastUpdated ?? "");
+  const lat = w.location?.latitude;
+  const lng = w.location?.longitude;
+  if (!w.vehicleId || !Number.isFinite(recordedAt) || !isFiniteNumber(lat) || !isFiniteNumber(lng)) return [];
+  const line = w.line?.publicCode;
+  return [
+    {
+      id: w.vehicleId as VehicleId,
+      recordedAt,
+      position: [lng, lat],
+      bearing: isFiniteNumber(w.bearing) ? ((w.bearing % 360) + 360) % 360 : null,
+      journeyEnded: w.vehicleStatus === "COMPLETED" || w.vehicleStatus === "CANCELLED",
+      mode: parseMode(w.mode),
+      journey: line
+        ? { line, destination: w.destinationName ?? null, delaySeconds: isFiniteNumber(w.delay) ? w.delay : null }
+        : null,
+    },
+  ];
 }
 
+/** Entur's VehicleModeEnumeration. TRAM, METRO, AIR and TAXI fall through to `other`. */
+const MODES = new Map<string, Mode>([
+  ["BUS", "bus"],
+  ["COACH", "coach"],
+  ["FERRY", "ferry"],
+  ["RAIL", "train"],
+]);
+
 function parseMode(mode: string | null | undefined): Mode {
-  // TODO: BUS → bus, COACH → coach, FERRY / WATER → ferry, RAIL → train, anything else → other
-  throw new Error("not implemented");
+  return MODES.get(mode ?? "") ?? "other";
+}
+
+function isFiniteNumber(x: unknown): x is number {
+  return typeof x === "number" && Number.isFinite(x);
 }

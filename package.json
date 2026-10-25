@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "replay": "vitest run scripts/replay.test.ts"
   },
   "dependencies": {
     "@deck.gl/core": "9.4.0",
