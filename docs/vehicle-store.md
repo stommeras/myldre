@@ -11,7 +11,7 @@ Constraints from PLAN.md and SPIKES.md:
 - Upsert by `vehicleId`. A vehicle is stale when `lastUpdated` is older than 2 minutes or its status is COMPLETED or CANCELLED. A null status counts as alive, because 18% of Norway's records have one.
 - A null bearing keeps the previous bearing. Speed is derived, because `speed` is null in 92 to 100% of records.
 - A trail belongs to the vehicle and survives journey changes.
-- A tween lasts about the vehicle's own update gap (p50 4 s, p90 21 s in Norway).
+- A tween lasts about the vehicle's own update gap (p50 4 s, p90 21 s in Norway). M5 replaces this with delayed playback along the route shape (SPIKES.md, route-shape glide).
 - z comes from `map.queryTerrainElevation()`. It sharpens as DEM tiles load, so the store re-samples it.
 - Map and deck state live outside Solid's reactivity.
 
@@ -128,7 +128,7 @@ Verification: the sketch type-checks under `strict` against deck.gl 9.4.0, mapli
 - **Solid `createStore` holding the vehicles.** The UI would get reactivity for free, but deck would read 1200 tracked proxies 60 times a second, against PLAN's rule that map and deck state stay outside Solid.
 - **deck.gl attribute `transitions` on `getPosition` (a GPU tween).** It costs no CPU per frame, but its duration is per layer, not per vehicle's gap. Every batch of 20 would restart all 1200 transitions, and z and bearing couldn't follow the same rule.
 - **Struct-of-arrays store feeding deck binary attributes.** It is the fastest option, but evictions need free-slot management and trails become variable-length rows. At 1200 vehicles the accessor path already costs under 1 ms.
-- **Delayed playback on source timestamps** (draw at `now - gap` and interpolate between reports). It handles batch jitter best, but needs a per-vehicle clock offset, and PLAN asks for a tween over the observed gap. `motion.ts` is the swap point if M5 wants it.
+- **Delayed playback on source timestamps** (draw at `now - gap` and interpolate between reports). It handles batch jitter best, but needs a per-vehicle clock offset, and PLAN asked for a tween over the observed gap. The route-shape glide spike later measured it as the fix for the stop-start, so M5 adopts it with `motion.ts` as the swap point.
 - **Two source implementations behind a config flag.** That is two ways to do one task, plus a flag nobody turns off. Git keeps the Entur adapter after M4.
 
 ## Open questions and risks
