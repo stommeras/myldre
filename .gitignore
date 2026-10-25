@@ -1,0 +1,19 @@
+# Dependencies and build output
+node_modules/
+dist/
+
+# Rust relay (M4)
+target/
+
+# Local env and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
