@@ -83,7 +83,7 @@ Module map:
 - Trails: `trails` keeps its reference until a trail gains a point, a z changes, or a vehicle is forgotten. Between those events TripsLayer only updates its `currentTime` uniform.
 - Picking: deck `onClick` hands the picked pose's id, or null, to `onPick`, which is the Solid setter.
 
-**Terrain z.** The store gets `ElevationAt` as a plain function, the only map knowledge it has. Each report samples z once for its own point, about 100 queries a second for Norway. A DEM tile load calls `terrainChanged()`, which is O(1) and bumps an epoch. `frame` then sweeps vehicles behind that epoch round-robin, within a 2 ms budget, re-sampling every trail point and the tween start. Only a full sweep marks a vehicle current, so a report arriving mid-sweep can't hide unswept points. A null sample keeps the old z. The trigger is `sourcedata`, not `idle`, because `idle` may never fire while deck animates every frame.
+**Terrain z.** The store gets `ElevationAt` as a plain function, the only map knowledge it has. Each report samples z once for its own point, about 100 queries a second for Norway. A DEM tile load calls `terrainChanged()`, which is O(1) and bumps an epoch. `frame` then sweeps vehicles behind that epoch round-robin, within a 2 ms budget, re-sampling every trail point and the tween start. Only a full sweep marks a vehicle current, so a report arriving mid-sweep can't hide unswept points. A null sample keeps the old z. The trigger is `sourcedata`, not `idle`. Deck repaints the map every frame, so `idle` fires every frame too (measured at 60 a second in M1) and says nothing about new tiles.
 
 **Per-frame cost for about 1200 vehicles (estimates, not measured).** `frame` does one map pass with a stale check, three lerps and a bearing lerp per vehicle, well under 0.5 ms. deck then recomputes instance attributes for two layers of 1200, under 1 ms. Steady state makes no terrain queries per frame. After a tile load, sweeps take at most 2 ms a frame until done. Rebuilding trail geometry (up to about 90k vertices) happens about 6 times a second in Norway and is the biggest CPU item.
 
@@ -134,14 +134,20 @@ Verification: the sketch type-checks under `strict` against deck.gl 9.4.0, mapli
 ## Open questions and risks
 
 - Does `opacity` on a `ScenegraphLayer` crossfade cleanly, or does transparency sorting look wrong mid-fade? A fallback is to scale the models down while the dots fade in.
-- Does `MapLibreOverlay` in interleaved mode trigger a map repaint on every `setProps`, or does the rAF loop need `map.triggerRepaint()`? Check this in M1.
-- How fast is `queryTerrainElevation`? The 2 ms budget assumes a few µs per call. Measure it in M1.
 - Will the relay send full states? The contract says a source expands deltas itself, which would mean `source.ts` keeps a map of last journeys.
 
 Decided at sign-off (2026-10-25): a trail survives a long silence, a hidden vehicle's trail fades out on its own, and the 9 to 11 crossfade zoom gets tuned by eye in M2.
 
 Decided in implementation (2026-10-25): the parser prefixes `vehicleId` with the codespace (`SKY:101`), because each operator picks its own ids. The Sunday Norway capture had no id shared by two codespaces, but 175 of its 1219 ids are 1 to 4 digits, and Ruter was absent.
 
+## Answered in M1 (2026-10-25)
+
+Measured in headless Chromium 1248 with ANGLE on Vulkan (RTX 3060 Ti, 60 fps), against live Entur data in Bergen with about 110 visible vehicles. The script is `~/scratch/m1-map-check/check.mjs`, outside the repo.
+
+- **`setProps` repaints the map on its own, so the loop doesn't call `map.triggerRepaint()`.** With the camera still, MapLibre rendered 60.3 frames a second with live props. It also rendered 60.3 a second when `Date.now` and `store.frame` were frozen, so every `setProps` carried identical props. With the vehicle loop stopped it rendered 0. In the source, interleaved mode sets deck's `_customRender` to `map.triggerRepaint()`. The cost is a full map repaint every frame for as long as the page is open.
+- **`queryTerrainElevation` takes 0.4 to 1.2 µs a call, below the few µs the 2 ms budget assumed.** Medians of 7 rounds of 10,000 calls at random points: 0.43 µs in view and 0.71 µs across the whole Bergen box at zoom 12.5, then 0.49 µs and 1.16 µs at zoom 15. No call returned null. The 2 ms budget therefore covers about 1,700 to 4,600 queries a frame. A full sweep of Norway's roughly 90k trail points would take about 20 to 50 frames.
+- `store.frame` took under 0.1 ms at p95 for 110 vehicles. A frame right after `terrainChanged()` took 0.4 ms.
+
 ## Next implementation step
 
-Fill in `motion.ts` and `VehicleStore` against `store.test.ts`. Then feed it a saved spike capture from `~/scratch/entur-vehicles-spike/` before any map exists.
+M1 is left with tuning the OpenFreeMap dark style. M2 then drops the bounding box.

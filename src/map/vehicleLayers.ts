@@ -1,8 +1,11 @@
+import type { Color, Layer } from "@deck.gl/core";
+import { TripsLayer } from "@deck.gl/geo-layers";
+import { ScatterplotLayer } from "@deck.gl/layers";
 import { MapLibreOverlay } from "@deck.gl/maplibre";
-import type { Layer } from "@deck.gl/core";
+import { ScenegraphLayer } from "@deck.gl/mesh-layers";
 import type { Map as MapLibreMap, MapSourceDataEvent } from "maplibre-gl";
-import type { Frame, VehicleStore, VehiclePose } from "../vehicles/store";
-import type { VehicleId } from "../vehicles/types";
+import { TRAIL_MS, type Frame, type TrailPath, type VehicleStore, type VehiclePose } from "../vehicles/store";
+import type { Mode, VehicleId } from "../vehicles/types";
 
 /**
  * TripsLayer timestamps are float32 on the GPU, and epoch ms don't fit. Times go to deck as
@@ -12,6 +15,16 @@ const T0 = Date.now();
 const seconds = (epochMs: number) => (epochMs - T0) / 1000;
 
 const GENERIC_MODEL = "/models/generic.glb";
+/** The nose is glTF +Z, which faces south after the 90° roll. Checked by eye with side views at bearings 90 and 225. */
+const MODEL_YAW_OFFSET = 180;
+/** Glowing accents on the dark base, one per mode. */
+const GLOW: Record<Mode, Color> = {
+  bus: [255, 170, 60],
+  coach: [255, 120, 80],
+  ferry: [80, 200, 255],
+  train: [190, 130, 255],
+  other: [230, 230, 230],
+};
 /** Below DOTS_ZOOM only dots, above MODELS_ZOOM only models, crossfade between. Tune by eye. */
 const DOTS_ZOOM = 9;
 const MODELS_ZOOM = 11;
@@ -34,8 +47,8 @@ export function attachVehicleLayers(
   map.addControl(overlay);
 
   // Terrain z: each new report samples its own z in the store. When DEM tiles arrive the store
-  // re-samples older points over the next frames. Not gated on `idle`, which may never fire
-  // while deck animates every frame.
+  // re-samples older points over the next frames. Not gated on `idle`, which fires every frame
+  // because deck repaints every frame.
   const onSourceData = (e: MapSourceDataEvent) => {
     if (e.tile && e.sourceId === map.getTerrain()?.source) store.terrainChanged();
   };
@@ -65,24 +78,55 @@ export function attachVehicleLayers(
  */
 function vehicleLayers({ poses, trails }: Frame, zoom: number, now: number): Layer[] {
   const models = modelOpacity(zoom);
-  // TODO:
-  // new TripsLayer<TrailPath>({ id: "trails", data: trails,
-  //   getPath: d => d.path, getTimestamps: d => d.times.map(seconds),
-  //   currentTime: seconds(now), trailLength: TRAIL_MS / 1000, fadeTrail: true,
-  //   widthMinPixels: 2, getColor: glow by d.mode })
-  // new ScatterplotLayer<VehiclePose>({ id: "dots", data: poses, visible: models < 1, opacity: 1 - models,
-  //   getPosition: d => d.position, radiusUnits: "pixels", getRadius: 3, billboard: true,
-  //   getFillColor: glow by d.mode, pickable: true })
-  // new ScenegraphLayer<VehiclePose>({ id: "models", data: poses, visible: models > 0, opacity: models,
-  //   scenegraph: GENERIC_MODEL, sizeScale: 3, getPosition: d => d.position,
-  //   getOrientation: d => [0, MODEL_YAW_OFFSET - d.bearing, 90], pickable: true })
   // No beforeId: vehicles draw above the basemap labels (SPIKES.md, deck.gl#10700).
   // M3: one ScenegraphLayer per model, from a Record<Mode, url>, each fed poses filtered by mode.
-  throw new Error("not implemented");
+  return [
+    new TripsLayer<TrailPath>({
+      id: "trails",
+      data: trails,
+      // A trail is never a loop. Without "open", deck treats a path that ends where it starts
+      // (a parked vehicle) as closed, changes its vertex count, and overflows the timestamps.
+      // Open paths skip normalization, so they have to be flat.
+      _pathType: "open",
+      getPath: (d) => d.path.flat(),
+      getTimestamps: (d) => d.times.map(seconds),
+      getColor: (d) => GLOW[d.mode],
+      currentTime: seconds(now),
+      trailLength: TRAIL_MS / 1000,
+      fadeTrail: true,
+      widthMinPixels: 2,
+    }),
+    new ScatterplotLayer<VehiclePose>({
+      id: "dots",
+      data: poses,
+      visible: models < 1,
+      opacity: 1 - models,
+      getPosition: (d) => d.position,
+      getFillColor: (d) => GLOW[d.mode],
+      radiusUnits: "pixels",
+      getRadius: 3,
+      billboard: true,
+      pickable: true,
+    }),
+    new ScenegraphLayer<VehiclePose>({
+      id: "models",
+      data: poses,
+      visible: models > 0,
+      opacity: models,
+      scenegraph: GENERIC_MODEL,
+      sizeScale: 3,
+      sizeMinPixels: 1.5,
+      _lighting: "pbr",
+      getPosition: (d) => d.position,
+      getOrientation: (d) => [0, MODEL_YAW_OFFSET - d.bearing, 90],
+      getColor: (d) => GLOW[d.mode],
+      pickable: true,
+    }),
+  ];
 }
 
 /** 0 at DOTS_ZOOM and below, 1 at MODELS_ZOOM and above, smoothstep between. */
 function modelOpacity(zoom: number): number {
-  // TODO: t = clamp01((zoom - DOTS_ZOOM) / (MODELS_ZOOM - DOTS_ZOOM)); return t * t * (3 - 2 * t)
-  throw new Error("not implemented");
+  const t = Math.min(1, Math.max(0, (zoom - DOTS_ZOOM) / (MODELS_ZOOM - DOTS_ZOOM)));
+  return t * t * (3 - 2 * t);
 }

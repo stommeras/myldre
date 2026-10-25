@@ -1,13 +1,11 @@
 import { createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Map as MapLibreMap } from "maplibre-gl";
+import { createMap } from "./map/createMap";
 import { attachVehicleLayers } from "./map/vehicleLayers";
 import { InfoCard } from "./ui/InfoCard";
 import { vehicleSource } from "./vehicles/source";
 import { VehicleStore } from "./vehicles/store";
 import type { VehicleId } from "./vehicles/types";
-
-/** Map setup (style, terrain, camera) is outside this sketch. */
-declare function createMap(container: HTMLElement): MapLibreMap;
 
 /**
  * Composition root and the only bridge between plain state and Solid. Two signals cross it:
@@ -30,6 +28,8 @@ export function App() {
   onMount(() => {
     map = createMap(container);
     const detach = attachVehicleLayers(map, store, setSelected);
+    // Browser checks drive the map and store from outside (docs/vehicle-store.md, Answered in M1).
+    if (import.meta.env.DEV) Object.assign(window, { map, store });
     const stop = vehicleSource((reports) => {
       store.ingest(reports, Date.now());
       setVersion(store.version);

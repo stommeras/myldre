@@ -20,11 +20,11 @@ A tilted 3D night map of Norway with live public transport vehicles moving on re
 
 ### M1: Bergen moving, night mood (one weekend)
 
-- [ ] Vite + SolidJS + TS scaffold with a full-screen MapLibre map
+- [x] Vite + SolidJS + TS scaffold with a full-screen MapLibre map
 - [ ] OpenFreeMap style tuned dark, Terrarium terrain at 1.5x, tilted camera over Bergen
-- [ ] Browser subscribes to Entur with a Bergen bounding box, stale vehicles hidden
-- [ ] One generic low-poly glTF per vehicle, z from `queryTerrainElevation` (re-queried as terrain tiles load), rotated by bearing
-- [ ] Linear tween from previous to latest position, lasting about the vehicle's own update gap
+- [x] Browser subscribes to Entur with a Bergen bounding box, stale vehicles hidden
+- [x] One generic low-poly glTF per vehicle, z from `queryTerrainElevation` (re-queried as terrain tiles load), rotated by bearing
+- [x] Linear tween from previous to latest position, lasting about the vehicle's own update gap
 
 ### M2: All of Norway, readable
 
