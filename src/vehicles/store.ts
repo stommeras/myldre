@@ -92,6 +92,8 @@ export class VehicleStore {
   #terrainEpoch = 0;
   /** Built lazily, dropped when a trail gains a point, a z changes, or a vehicle is forgotten. */
   #trails: readonly TrailPath[] | null = null;
+  /** Index into the vehicle map where the next z sweep resumes. */
+  #zCursor = 0;
 
   constructor(private readonly elevationAt: ElevationAt) {}
 
@@ -106,42 +108,56 @@ export class VehicleStore {
    * or a replayed relay snapshot changes nothing the second time.
    */
   ingest(reports: readonly VehicleReport[], now: number): void {
-    // TODO:
-    // sorted = [...reports].sort(by recordedAt)       // history arrives in order, whatever the source does
-    // chained = new Set<VehicleId>()                   // vehicles already advanced in this batch
-    // for r of sorted:
-    //   v = vehicles.get(r.id)
-    //   if v && r.recordedAt <= v.latest.recordedAt: continue
-    //   position = [...r.position, elevationAt(r.position) ?? v?.trail.at(-1).position[2] ?? 0]
-    //   if !v:
-    //     tween = startTween(position, r.bearing ?? 0, Infinity, now)   // snap
-    //     vehicles.set(r.id, { latest: r, bearing: r.bearing, trail: [{ position, recordedAt, drawnAt: now }],
-    //                          tween, zEpoch: -1 })
-    //   else:
-    //     gap = r.recordedAt - v.latest.recordedAt
-    //     prev = v.trail.at(-1)
-    //     bearing = r.bearing ?? v.bearing ?? bearingBetween(prev.position, r.position)
-    //     // Live report: glide from where the vehicle is drawn now, so a report landing mid-tween
-    //     // doesn't jump. Second or later report of one vehicle in one batch (relay history,
-    //     // reconnect burst): chain from the previous point at its own time, so only the last
-    //     // step animates and 5 min of history doesn't play back as one long slide.
-    //     from = chained.has(r.id)
-    //       ? { position: prev.position, bearing: v.bearing ?? bearing }
-    //       : drawnAt(v.tween, prev.position, v.bearing ?? bearing, now)
-    //     v.tween = startTween(from.position, from.bearing, gap, now)
-    //     // An outage (gap > SNAP_GAP_MS) snaps the model but keeps the trail: a layover at a depot
-    //     // adds a zero-length segment, and the segment across the silence is already mostly faded.
-    //     v.trail.push({ position, recordedAt: r.recordedAt, drawnAt: NaN })   // stamped below
-    //     drop leading points with recordedAt < r.recordedAt - TRAIL_MS
-    //     v.bearing = bearing; v.latest = r
-    //   chained.add(r.id)
-    // stamp: for each vehicle in chained, offset = v.tween.endsAt - v.latest.recordedAt, and each
-    //   point pushed in this batch gets drawnAt = max(recordedAt + offset, previous drawnAt + 1).
-    //   A single live report lands exactly on tween.endsAt. History keeps its spacing and ends
-    //   at the tween's end. Points from earlier batches are never re-stamped.
-    // delete vehicles with latest.recordedAt < now - FORGET_MS
-    // if anything was added, advanced or deleted: version++, trails = null
-    throw new Error("not implemented");
+    const sorted = [...reports].sort((x, y) => x.recordedAt - y.recordedAt);
+    const added = new Map<VehicleId, TrailPoint[]>();
+    for (const r of sorted) {
+      const v = this.#vehicles.get(r.id);
+      if (v && r.recordedAt <= v.latest.recordedAt) continue;
+      const z = this.elevationAt(r.position) ?? v?.trail.at(-1)!.position[2] ?? 0;
+      const point: TrailPoint = { position: [r.position[0], r.position[1], z], recordedAt: r.recordedAt, drawnAt: NaN };
+      if (!v) {
+        const tween = startTween(point.position, r.bearing ?? 0, Infinity, now);
+        this.#vehicles.set(r.id, { latest: r, bearing: r.bearing, trail: [point], tween, zEpoch: -1 });
+        added.set(r.id, [point]);
+        continue;
+      }
+      const prev = v.trail.at(-1)!;
+      const bearing = r.bearing ?? v.bearing ?? bearingBetween([prev.position[0], prev.position[1]], r.position);
+      // A live report glides from where the vehicle is drawn now. A later report of the same
+      // vehicle in one batch (relay history, reconnect burst) chains from the previous point, so
+      // only the last step animates.
+      const from = added.has(r.id)
+        ? { position: prev.position, bearing: v.bearing ?? bearing }
+        : drawnAt(v.tween, prev.position, v.bearing ?? bearing, now);
+      v.tween = startTween(from.position, from.bearing, r.recordedAt - v.latest.recordedAt, now);
+      // An outage snaps the model but keeps the trail: the segment across the silence is mostly faded.
+      v.trail.push(point);
+      const keepFrom = v.trail.findIndex((p) => p.recordedAt >= r.recordedAt - TRAIL_MS);
+      v.trail.splice(0, keepFrom);
+      v.bearing = bearing;
+      v.latest = r;
+      added.set(r.id, [...(added.get(r.id) ?? []), point]);
+    }
+    for (const [vid, points] of added) {
+      const v = this.#vehicles.get(vid)!;
+      const offset = v.tween.endsAt - v.latest.recordedAt;
+      for (const p of points) {
+        const i = v.trail.indexOf(p);
+        if (i < 0) continue;
+        p.drawnAt = Math.max(p.recordedAt + offset, i > 0 ? v.trail[i - 1].drawnAt + 1 : -Infinity);
+      }
+    }
+    let changed = added.size > 0;
+    for (const [vid, v] of this.#vehicles) {
+      if (v.latest.recordedAt < now - FORGET_MS) {
+        this.#vehicles.delete(vid);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.#version++;
+      this.#trails = null;
+    }
   }
 
   /**
@@ -158,23 +174,25 @@ export class VehicleStore {
    * re-sampling terrain z.
    */
   frame(now: number): Frame {
-    // TODO:
-    // poses = []
-    // for v of vehicles, skip isStale(v, now):
-    //   { position, bearing } = drawnAt(v.tween, v.trail.at(-1).position, v.bearing ?? 0, now)
-    //   poses.push({ id, mode, position, bearing })
-    // #sweepZ(now)   // may set trails = null
-    // trails ??= all vehicles with trail.length >= 2 → { id, mode, path, times: trail.map(p => p.drawnAt) }
-    // return { poses, trails }
     // ponytail: ~1200 fresh pose objects per frame, and deck recomputes the instance attributes
     //           anyway. Reuse a pool if GC shows up in a profile.
-    throw new Error("not implemented");
+    const poses: VehiclePose[] = [];
+    for (const [id, v] of this.#vehicles) {
+      if (isStale(v, now)) continue;
+      const { position, bearing } = drawnAt(v.tween, v.trail.at(-1)!.position, v.bearing ?? 0, now);
+      poses.push({ id, mode: v.latest.mode, position, bearing });
+    }
+    this.#sweepZ();
+    this.#trails ??= [...this.#vehicles]
+      .filter(([, v]) => v.trail.length >= 2)
+      .map(([id, v]) => ({ id, mode: v.latest.mode, path: v.trail.map((p) => p.position), times: v.trail.map((p) => p.drawnAt) }));
+    return { poses, trails: this.#trails };
   }
 
   /** The info card's data, or null when the vehicle is unknown or stale. */
   info(id: VehicleId, now: number): VehicleInfo | null {
-    // TODO: v = vehicles.get(id); v && !isStale(v, now) ? { id, mode, journey } from v.latest : null
-    throw new Error("not implemented");
+    const v = this.#vehicles.get(id);
+    return v && !isStale(v, now) ? { id, mode: v.latest.mode, journey: v.latest.journey } : null;
   }
 
   /**
@@ -184,10 +202,33 @@ export class VehicleStore {
    * Stops after Z_BUDGET_MS of `performance.now()` and resumes from a cursor next frame.
    * Drops `#trails` if any z changed.
    */
-  #sweepZ(now: number): void {
+  #sweepZ(): void {
     // ponytail: up to ~1200 × ~75 points after a big tile load, spread over frames. If z lags
     //           visibly after a pan, sweep viewport vehicles first.
-    throw new Error("not implemented");
+    const start = performance.now();
+    let changed = false;
+    let i = 0;
+    for (const v of this.#vehicles.values()) {
+      if (i++ < this.#zCursor || v.zEpoch >= this.#terrainEpoch) continue;
+      for (const p of v.trail) {
+        const z = this.elevationAt([p.position[0], p.position[1]]);
+        if (z !== null && z !== p.position[2]) {
+          p.position = [p.position[0], p.position[1], z];
+          changed = true;
+        }
+      }
+      const f = v.tween.from;
+      const fz = this.elevationAt([f[0], f[1]]);
+      if (fz !== null) v.tween.from = [f[0], f[1], fz];
+      v.zEpoch = this.#terrainEpoch;
+      if (performance.now() - start > Z_BUDGET_MS) {
+        this.#zCursor = i;
+        if (changed) this.#trails = null;
+        return;
+      }
+    }
+    this.#zCursor = 0;
+    if (changed) this.#trails = null;
   }
 }
 

@@ -1,7 +1,7 @@
-// The store's rules as an executable spec. Fails until the bodies are filled in. Needs `vitest`.
+// The store's rules as an executable spec.
 import { describe, expect, it } from "vitest";
 import { speedMps } from "./motion";
-import { STALE_MS, VehicleStore } from "./store";
+import { STALE_MS, TRAIL_MS, VehicleStore } from "./store";
 import type { VehicleId, VehicleReport } from "./types";
 
 const id = "SKY:Vehicle:1" as VehicleId;
@@ -99,6 +99,40 @@ describe("VehicleStore", () => {
     const f = s.frame(30_000);
     expect(f.trails[0].path).toHaveLength(3);
     expect(f.poses[0].position[0]).toBeCloseTo(B[0]);
+  });
+
+  it("keeps the trails reference until something changes", () => {
+    const s = store();
+    s.ingest([report({ position: A }), report({ recordedAt: 5_000, position: B })], 5_000);
+    const { trails } = s.frame(5_000);
+    expect(s.frame(6_000).trails).toBe(trails);
+    s.ingest([report({ recordedAt: 10_000, position: C })], 10_000);
+    expect(s.frame(10_000).trails).not.toBe(trails);
+  });
+
+  it("re-samples z after terrainChanged, and a null sample keeps the old z", () => {
+    let h: number | null = 0;
+    const s = new VehicleStore(() => h);
+    s.ingest([report({ position: A }), report({ recordedAt: 5_000, position: B })], 5_000);
+    const before = s.frame(5_000).trails;
+    h = 100;
+    s.terrainChanged();
+    const after = s.frame(5_000).trails;
+    expect(after).not.toBe(before);
+    expect(after[0].path.map((p) => p[2])).toEqual([100, 100]);
+    h = null;
+    s.terrainChanged();
+    expect(s.frame(5_000).trails[0].path.map((p) => p[2])).toEqual([100, 100]);
+  });
+
+  it("forgets a vehicle silent for STALE_MS + TRAIL_MS, trail and all", () => {
+    const s = store();
+    const other = "SKY:Vehicle:2" as VehicleId;
+    s.ingest([report({ position: A }), report({ recordedAt: 5_000, position: B })], 5_000);
+    expect(s.frame(5_000).trails).toHaveLength(1);
+    const late = 6_000 + STALE_MS + TRAIL_MS;
+    s.ingest([report({ id: other, recordedAt: late })], late);
+    expect(s.frame(late).trails).toHaveLength(0);
   });
 });
 

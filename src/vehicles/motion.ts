@@ -29,10 +29,9 @@ export const SNAP_GAP_MS = 2 * 60_000;
  * vehicle's first report.
  */
 export function startTween(from: Position3, fromBearing: number, gapMs: number, now: number): Tween {
-  // TODO: gapMs > SNAP_GAP_MS → { from, fromBearing, startedAt: now, endsAt: now }
-  //       else endsAt = now + max(gapMs, MIN_TWEEN_MS)
   // ponytail: last gap only. Use a short EMA of gaps if vehicles visibly stall or rush.
-  throw new Error("not implemented");
+  const duration = gapMs > SNAP_GAP_MS ? 0 : Math.max(gapMs, MIN_TWEEN_MS);
+  return { from, fromBearing, startedAt: now, endsAt: now + duration };
 }
 
 /** Where and which way the vehicle is drawn at `now`. Holds at `to` once the tween ends. */
@@ -42,20 +41,35 @@ export function drawnAt(
   toBearing: number,
   now: number,
 ): { position: Position3; bearing: number } {
-  // TODO: t = clamp01((now - startedAt) / (endsAt - startedAt)), 1 when the duration is 0
-  //       position = lerp(from, to, t), z included. Mid-tween z is a straight line between two
-  //       terrain samples, so it can cut a crest on long gaps (accepted, see the design doc).
-  //       bearing  = shortest-arc lerp(fromBearing, toBearing, t), normalised to [0, 360)
-  throw new Error("not implemented");
+  // Mid-tween z is a straight line between two terrain samples, so it can cut a crest on long
+  // gaps (accepted, see the design doc).
+  const duration = tween.endsAt - tween.startedAt;
+  const t = duration > 0 ? Math.min(1, Math.max(0, (now - tween.startedAt) / duration)) : 1;
+  const { from } = tween;
+  const turn = ((toBearing - tween.fromBearing + 540) % 360) - 180;
+  return {
+    position: [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t, from[2] + (to[2] - from[2]) * t],
+    bearing: (((tween.fromBearing + turn * t) % 360) + 360) % 360,
+  };
 }
 
 /** Degrees clockwise from north, from a to b. Only for a vehicle that has never reported a bearing. */
 export function bearingBetween(a: LngLat, b: LngLat): number {
-  throw new Error("not implemented");
+  const [dx, dy] = offsetMetres(a, b);
+  return ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
 }
 
 /** Ground speed between two reports in m/s. Derived, never stored. M5 is its first caller. */
 export function speedMps(a: LngLat, aAt: number, b: LngLat, bAt: number): number {
-  // TODO: equirectangular distance (fine at these ranges) / ((bAt - aAt) / 1000)
-  throw new Error("not implemented");
+  const [dx, dy] = offsetMetres(a, b);
+  return Math.hypot(dx, dy) / ((bAt - aAt) / 1000);
+}
+
+const EARTH_RADIUS_M = 6_371_000;
+
+/** East and north offset from a to b in metres. Equirectangular, fine at these ranges. */
+function offsetMetres(a: LngLat, b: LngLat): [east: number, north: number] {
+  const rad = Math.PI / 180;
+  const meanLat = ((a[1] + b[1]) / 2) * rad;
+  return [(b[0] - a[0]) * rad * Math.cos(meanLat) * EARTH_RADIUS_M, (b[1] - a[1]) * rad * EARTH_RADIUS_M];
 }
