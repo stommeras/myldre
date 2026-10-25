@@ -24,6 +24,7 @@ const QUERY = /* GraphQL */ `
       vehicleId mode vehicleStatus lastUpdated bearing delay destinationName
       location { latitude longitude }
       line { publicCode }
+      codespace { codespaceId }
     }
   }
 `;
@@ -31,6 +32,7 @@ const QUERY = /* GraphQL */ `
 /** Wire shape. Not exported. Everything nullable because it's untrusted input. */
 interface WireVehicle {
   vehicleId?: string | null;
+  codespace?: { codespaceId?: string | null } | null;
   lastUpdated?: string | null;
   location?: { latitude?: number | null; longitude?: number | null } | null;
   bearing?: number | null;
@@ -62,16 +64,21 @@ export const vehicleSource: VehicleSource = (onReports) => {
   };
 };
 
-/** Wire to domain. Drops a record missing id, time or position. Returns [] or [report] for flatMap. */
+/**
+ * Wire to domain. Drops a record missing id, codespace, time or position. Each operator picks its
+ * own vehicle ids, so the id is prefixed with the codespace, e.g. `SKY:101`.
+ * Returns [] or [report] for flatMap.
+ */
 function parseVehicle(w: WireVehicle): VehicleReport[] {
   const recordedAt = Date.parse(w.lastUpdated ?? "");
   const lat = w.location?.latitude;
   const lng = w.location?.longitude;
-  if (!w.vehicleId || !Number.isFinite(recordedAt) || !isFiniteNumber(lat) || !isFiniteNumber(lng)) return [];
+  const codespace = w.codespace?.codespaceId;
+  if (!w.vehicleId || !codespace || !Number.isFinite(recordedAt) || !isFiniteNumber(lat) || !isFiniteNumber(lng)) return [];
   const line = w.line?.publicCode;
   return [
     {
-      id: w.vehicleId as VehicleId,
+      id: `${codespace}:${w.vehicleId}` as VehicleId,
       recordedAt,
       position: [lng, lat],
       bearing: isFiniteNumber(w.bearing) ? ((w.bearing % 360) + 360) % 360 : null,

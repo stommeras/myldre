@@ -133,13 +133,14 @@ Verification: the sketch type-checks under `strict` against deck.gl 9.4.0, mapli
 
 ## Open questions and risks
 
-- Is `vehicleId` unique across codespaces, or should the parser prefix the codespace?
 - Does `opacity` on a `ScenegraphLayer` crossfade cleanly, or does transparency sorting look wrong mid-fade? A fallback is to scale the models down while the dots fade in.
 - Does `MapLibreOverlay` in interleaved mode trigger a map repaint on every `setProps`, or does the rAF loop need `map.triggerRepaint()`? Check this in M1.
 - How fast is `queryTerrainElevation`? The 2 ms budget assumes a few µs per call. Measure it in M1.
 - Will the relay send full states? The contract says a source expands deltas itself, which would mean `source.ts` keeps a map of last journeys.
 
 Decided at sign-off (2026-10-25): a trail survives a long silence, a hidden vehicle's trail fades out on its own, and the 9 to 11 crossfade zoom gets tuned by eye in M2.
+
+Decided in implementation (2026-10-25): the parser prefixes `vehicleId` with the codespace (`SKY:101`), because each operator picks its own ids. The Sunday Norway capture had no id shared by two codespaces, but 175 of its 1219 ids are 1 to 4 digits, and Ruter was absent.
 
 ## Next implementation step
 
