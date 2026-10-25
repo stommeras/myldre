@@ -1,5 +1,5 @@
 // Replays a saved spike capture through the real source, store and frame loop.
-// REPLAY=~/scratch/entur-vehicles-spike/capture-query-none.json npm run replay
+// REPLAY=~/scratch/entur-vehicles-spike/capture-query-none.json pnpm replay
 import { readFileSync } from "node:fs";
 import { expect, it, vi } from "vitest";
 import { STALE_MS, TRAIL_MS, VehicleStore } from "../src/vehicles/store";
