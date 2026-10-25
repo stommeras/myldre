@@ -7,6 +7,7 @@ A tilted 3D night map of Norway with live public transport vehicles moving on re
 - Look: stylized toy diorama. Low-poly, flat-shaded vehicles scaled up about 3x, muted dark base, glowing accents.
 - Frontend: SolidJS + Vite + TypeScript SPA. Map and deck.gl state live outside Solid's reactivity.
 - Map: MapLibre GL JS 6, OpenFreeMap base tiles with a dark style, AWS Terrarium terrain with 1.5x exaggeration (tunable).
+- Camera: the map opens tilted at zoom 15 over Bergen centre. The shape glide only shows from about zoom 15 up (SPIKES.md, route-shape glide).
 - Vehicles: deck.gl `ScenegraphLayer`, mounted via `MapLibreOverlay` from `@deck.gl/maplibre` in interleaved mode, drawn above the basemap labels. Each vehicle's z comes from `map.queryTerrainElevation()`, because `TerrainExtension` doesn't read MapLibre's terrain. Models at every zoom, crossfading to glowing dots when zoomed out. No clustering.
 - Data: one subscription to `wss://api.entur.io/realtime/v2/vehicles/subscriptions` (graphql-ws). Each message is a batch of full vehicle states, upserted by `vehicleId`. The browser sends the client name as a query param, `?ET-Client-Name=steff-myldre`, because it can't set headers on a WebSocket.
 - Motion: each vehicle has a playback clock 35 s behind real time. The clock waits at the newest report and catches up at 1.25x. Between two reports the vehicle glides along its service journey's shape at constant speed. It falls back to a straight line when a report is over 40 m off the shape or projects backwards. Text such as "now at" in the info card comes from the newest report, not the drawn position. See SPIKES.md, route-shape glide.
@@ -25,7 +26,7 @@ Build order: M1, then M5, then M2 to M4. Motion was the go/no-go question. Berge
 ### M1: Bergen moving, night mood (one weekend)
 
 - [x] Vite + SolidJS + TS scaffold with a full-screen MapLibre map
-- [ ] OpenFreeMap style tuned dark, Terrarium terrain at 1.5x, tilted camera over Bergen
+- [x] OpenFreeMap style tuned to a sodium-lit night, Terrarium terrain at 1.5x, tilted camera at zoom 15 over Bergen centre
 - [x] Browser subscribes to Entur with a Bergen bounding box, stale vehicles hidden
 - [x] One generic low-poly glTF per vehicle, z from `queryTerrainElevation` (re-queried as terrain tiles load), rotated by bearing
 - [x] Linear tween from previous to latest position, lasting about the vehicle's own update gap (replaced in M5)
@@ -56,7 +57,7 @@ Build order: M1, then M5, then M2 to M4. Motion was the go/no-go question. Berge
 - [ ] Parse `serviceJourney.id`, fetch and cache its pattern's `pointsOnLink`
 - [ ] Glide along the shape between two reports, with a straight fallback when a report is off the shape or runs backwards
 - [ ] Projection that searches forward from the last known distance, so out-and-back spurs and terminal loops don't snap to the wrong pass
-- [ ] Tunnel freezes: an exactly repeated location counts as no fix, and the vehicle glides across the whole freeze
+- [ ] Tunnel freezes: an exactly repeated location counts as no fix, and the vehicle glides across the whole freeze. A speed cap lets it arrive late after a freeze instead of a longer playback delay.
 
 ### M6: Follow-vehicle camera
 
