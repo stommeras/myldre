@@ -1,14 +1,32 @@
-import { bearingBetween, drawnAt, startTween, type Tween } from "./motion";
-import type { Journey, LngLat, Mode, Position3, VehicleId, VehicleReport } from "./types";
+import { bearingBetween, distanceMetres, OFF_SHAPE_M, passesNear, pointAlong, prepareShape, verticesBetween, type Pass, type RouteShape } from "./route";
+import type { Journey, JourneyId, LngLat, Mode, Position3, ShapeLookup, VehicleId, VehicleReport } from "./types";
 
 /** A report older than this hides the vehicle. */
 export const STALE_MS = 2 * 60_000;
 /** How long a trail is kept and how long it takes to fade out. The trail layer reads this too. */
 export const TRAIL_MS = 5 * 60_000;
+/** The first wait before asking again for an unanswered journey. Each later wait doubles, up to 10 minutes. */
+export const SHAPE_RETRY_MS = 30_000;
+/** The fastest a model is drawn, in metres per wall-clock second. Calibration knob. */
+export const SPEED_CAP_MPS: Record<Mode, number> = { bus: 25, coach: 30, ferry: 20, train: 70, other: 25 };
+
 /** A vehicle silent this long is forgotten, trail and all. */
 const FORGET_MS = STALE_MS + TRAIL_MS;
 /** Per-frame time budget for re-sampling terrain z after tiles load. */
 const Z_BUDGET_MS = 2;
+const DELAY_MS = 35_000;
+const CATCH_UP = 1.25;
+/** Playback rate while the model is less than 35 s behind. Only a new or restarted run gets there. */
+const EASE_IN = 0.8;
+/** A fix whose lag would pass this starts a new run there. Above the 145 s the Bergen capture's longest tunnel needs. */
+const MAX_LAG_MS = 3 * 60_000;
+const SHAPE_RETRY_MAX_MS = 10 * 60_000;
+const BACKWARD_GRACE_M = 15;
+/** A glide longer along the shape than DETOUR_FACTOR × its chord + DETOUR_SLACK_M is taken as the wrong pass. */
+const DETOUR_FACTOR = 2;
+const DETOUR_SLACK_M = 50;
+/** A model turns to a new heading over this many metres. */
+const TURN_M = 10;
 
 /** Terrain height in metres at a point, or null while no DEM tile covers it yet. */
 export type ElevationAt = (p: LngLat) => number | null;
@@ -21,10 +39,7 @@ export interface VehiclePose {
   bearing: number;
 }
 
-/**
- * A trail ready for `TripsLayer`. `times[i]` is when the drawn vehicle reaches `path[i]`
- * (epoch ms), so the trail's head sits under the tweened model, not ahead of it.
- */
+/** `times[i]` is the wall time the drawn model is at `path[i]`. The tail end may lie in the future. */
 export interface TrailPath {
   id: VehicleId;
   mode: Mode;
@@ -37,8 +52,8 @@ export interface Frame {
   /** Visible vehicles as drawn now. A fresh array every frame. */
   poses: readonly VehiclePose[];
   /**
-   * Trails of every known vehicle, hidden ones included: a stopped or ended vehicle's trail fades
-   * out on its own in TripsLayer. Same reference until a trail changes, so deck re-uploads only then.
+   * Trails of every known vehicle, hidden ones included, so they fade out on their own in TripsLayer.
+   * Same reference until a trail changes, so deck re-uploads only then.
    */
   trails: readonly TrailPath[];
 }
@@ -50,176 +65,301 @@ export interface VehicleInfo {
   journey: Journey | null;
 }
 
-/** Private. Nothing outside this file sees it. */
-interface TrailPoint {
+/** One point the drawn model passes. Behind `now` it is trail, ahead of `now` it is the plan. */
+interface PathPoint {
   position: Position3;
-  /** The report's `recordedAt`. Speed (M5) reads it. */
-  recordedAt: number;
-  /**
-   * When the drawn vehicle reaches this point: the tween's `endsAt` when the point arrived.
-   * Stamped once and never re-shifted, so older points' fade times don't jitter.
-   */
-  drawnAt: number;
+  /** Wall time, epoch ms, at which the drawn model is here. Stamped once, at ingest. TripsLayer's timestamp. */
+  at: number;
+  /** Heading of travel arriving here, degrees. A zero-length step copies the previous one. */
+  heading: number;
 }
 
-/** Private. Nothing outside this file sees it. */
-interface VehicleState {
-  latest: VehicleReport;
-  /** Last non-null bearing, or one derived from movement. Null until either exists. */
+/** The newest fix. Frozen and repeated ended reports aren't fixes. The bearing seeds a lazy projection. */
+interface Fix {
+  position: LngLat;
+  recordedAt: number;
   bearing: number | null;
-  /**
-   * Oldest first, never empty. The last point is always `latest.position` with its z, and is
-   * the tween target. Keyed by vehicle only, so a journey change can't reset it.
-   */
-  trail: TrailPoint[];
-  tween: Tween;
-  /** Terrain epoch at which every point of `trail` was last sampled. Only the z sweep writes it. */
+}
+
+/** Distance along a journey's shape of the newest fix that was on it. Where the forward window starts. */
+interface Cursor {
+  journey: JourneyId;
+  along: number;
+  recordedAt: number;
+}
+
+interface VehicleState {
+  /** The newest report of any kind. Info card, silence check, the ended check, mode. */
+  latest: VehicleReport;
+  fix: Fix;
+  cursor: Cursor | null;
+  /** Never empty. Keyed by vehicle only, so a journey change has nothing to reset. */
+  path: PathPoint[];
+  /** Terrain epoch at which every path point was last sampled. Only the z sweep writes it. */
   zEpoch: number;
 }
 
+type ShapeEntry =
+  | { state: "asked"; requestedAt: number; attempts: number }
+  | { state: "ready"; shape: RouteShape }
+  | { state: "none" };
+
 /**
- * Every vehicle the app knows about, and everything derived from them: visibility, pose,
- * trail, info. The one owner of per-vehicle state. Plain mutable state outside Solid.
- *
- * Writes come from `ingest` (the source) and `terrainChanged` (the map). The layers call
- * `frame` once per animation frame, and that's the only way to read poses and trails, so a
- * reader can't see an un-advanced store. All times are epoch ms on `Date.now()`'s clock,
- * because the stale rule compares `recordedAt` with local time (SPIKES: skew under 1 s).
+ * Every vehicle the app knows about, and everything derived from them: visibility, pose, trail, info.
+ * Plain mutable state outside Solid. Each vehicle has one timed path that is both its trail and its
+ * motion, stamped once at ingest, so `frame` and `info` only read it (docs/vehicle-store.md).
+ * All times are epoch ms on `Date.now()`'s clock.
  */
 export class VehicleStore {
   #vehicles = new Map<VehicleId, VehicleState>();
+  /** One entry per journey some known vehicle's newest report names. */
+  #shapes = new Map<JourneyId, ShapeEntry>();
   #version = 0;
   #terrainEpoch = 0;
-  /** Built lazily, dropped when a trail gains a point, a z changes, or a vehicle is forgotten. */
+  /** Built lazily, dropped when a path gains or loses a point, a z changes, or a vehicle is forgotten. */
   #trails: readonly TrailPath[] | null = null;
   /** Index into the vehicle map where the next z sweep resumes. */
   #zCursor = 0;
+  readonly #elevationAt: ElevationAt;
+  readonly #shapeOf: ShapeLookup;
 
-  constructor(private readonly elevationAt: ElevationAt) {}
+  constructor(deps: { elevationAt: ElevationAt; shapeOf: ShapeLookup }) {
+    this.#elevationAt = deps.elevationAt;
+    this.#shapeOf = deps.shapeOf;
+  }
 
-  /** Bumps on every ingest that changed something. Solid mirrors it into a signal for the info card. */
+  /** Bumps on every ingest that changed something a read can see. Solid mirrors it for the info card. */
   get version(): number {
     return this.#version;
   }
 
-  /**
-   * Upserts a batch of reports, in any order, possibly repeated or historical.
-   * Idempotent: a report no newer than the vehicle's latest is ignored, so a reconnect burst
-   * or a replayed relay snapshot changes nothing the second time.
-   */
+  /** Upserts a batch in any order, possibly repeated or historical. Idempotent. Asks for missing shapes. */
   ingest(reports: readonly VehicleReport[], now: number): void {
-    const sorted = [...reports].sort((x, y) => x.recordedAt - y.recordedAt);
-    const added = new Map<VehicleId, TrailPoint[]>();
-    for (const r of sorted) {
-      const v = this.#vehicles.get(r.id);
-      if (v && r.recordedAt <= v.latest.recordedAt) continue;
-      const z = this.elevationAt(r.position) ?? v?.trail.at(-1)!.position[2] ?? 0;
-      const point: TrailPoint = { position: [r.position[0], r.position[1], z], recordedAt: r.recordedAt, drawnAt: NaN };
-      if (!v) {
-        const tween = startTween(point.position, r.bearing ?? 0, Infinity, now);
-        this.#vehicles.set(r.id, { latest: r, bearing: r.bearing, trail: [point], tween, zEpoch: -1 });
-        added.set(r.id, [point]);
-        continue;
-      }
-      const prev = v.trail.at(-1)!;
-      const bearing = r.bearing ?? v.bearing ?? bearingBetween([prev.position[0], prev.position[1]], r.position);
-      // A live report glides from where the vehicle is drawn now. A later report of the same
-      // vehicle in one batch (relay history, reconnect burst) chains from the previous point, so
-      // only the last step animates.
-      const from = added.has(r.id)
-        ? { position: prev.position, bearing: v.bearing ?? bearing }
-        : drawnAt(v.tween, prev.position, v.bearing ?? bearing, now);
-      v.tween = startTween(from.position, from.bearing, r.recordedAt - v.latest.recordedAt, now);
-      // An outage snaps the model but keeps the trail: the segment across the silence is mostly faded.
-      v.trail.push(point);
-      const keepFrom = v.trail.findIndex((p) => p.recordedAt >= r.recordedAt - TRAIL_MS);
-      v.trail.splice(0, keepFrom);
-      v.bearing = bearing;
-      v.latest = r;
-      added.set(r.id, [...(added.get(r.id) ?? []), point]);
+    const byVehicle = new Map<VehicleId, VehicleReport[]>();
+    for (const r of [...reports].sort((a, b) => a.recordedAt - b.recordedAt)) {
+      const list = byVehicle.get(r.id) ?? [];
+      list.push(r);
+      byVehicle.set(r.id, list);
     }
-    for (const [vid, points] of added) {
-      const v = this.#vehicles.get(vid)!;
-      const offset = v.tween.endsAt - v.latest.recordedAt;
-      for (const p of points) {
-        const i = v.trail.indexOf(p);
-        if (i < 0) continue;
-        p.drawnAt = Math.max(p.recordedAt + offset, i > 0 ? v.trail[i - 1].drawnAt + 1 : -Infinity);
+    let changed = false;
+    for (const [id, batch] of byVehicle) {
+      let v = this.#vehicles.get(id);
+      let arrival = now;
+      let touched = false;
+      for (const r of batch) {
+        if (v && r.recordedAt <= v.latest.recordedAt) continue;
+        // `arrival`, not `now`: a history batch must not find the vehicle silent at its own older reports.
+        if (!v || this.#hidden(v, arrival)) {
+          if (r.journeyEnded) {
+            if (v) v.latest = r;
+            continue;
+          }
+          v = this.#startRun(id, v, r, arrival);
+          arrival = v.path[v.path.length - 1].at;
+          touched = true;
+          continue;
+        }
+        touched = true;
+        const wasEnded = v.latest.journeyEnded;
+        v.latest = r;
+        if ((wasEnded && r.journeyEnded) || samePosition(r.position, v.fix.position)) continue;
+        const leaves = Math.max(v.path[v.path.length - 1].at, arrival);
+        if (leaves - v.fix.recordedAt - DELAY_MS > MAX_LAG_MS) {
+          this.#startRun(id, v, r, arrival);
+          arrival = v.path[v.path.length - 1].at;
+        } else this.#appendSegment(v, r, leaves);
       }
+      if (!v || !touched) continue;
+      changed = true;
+      while (v.path.length > 1 && v.path[1].at < now - TRAIL_MS) v.path.shift();
+      if (v.latest.journeyId && !this.#hidden(v, now)) this.#askShape(v.latest.journeyId, now);
     }
-    let changed = added.size > 0;
-    for (const [vid, v] of this.#vehicles) {
+    for (const [id, v] of this.#vehicles) {
       if (v.latest.recordedAt < now - FORGET_MS) {
-        this.#vehicles.delete(vid);
+        this.#vehicles.delete(id);
         changed = true;
       }
     }
+    const named = new Set<JourneyId>();
+    for (const v of this.#vehicles.values()) if (v.latest.journeyId) named.add(v.latest.journeyId);
+    for (const j of this.#shapes.keys()) if (!named.has(j)) this.#shapes.delete(j);
     if (changed) {
       this.#version++;
       this.#trails = null;
     }
   }
 
-  /**
-   * Call when terrain tiles load (MapLibre `sourcedata` on the terrain source). O(1). `frame`
-   * re-samples z for vehicles behind this epoch within its time budget.
-   */
+  /** O(1). `frame` re-samples z within a 2 ms budget. Call on `sourcedata` for the terrain source. */
   terrainChanged(): void {
     this.#terrainEpoch++;
   }
 
-  /**
-   * Advances the store to `now` and returns what to draw. Called once per animation frame.
-   * Applies the stale rule, tweens every visible vehicle, and spends up to Z_BUDGET_MS
-   * re-sampling terrain z.
-   */
+  /** What to draw at `now`. Poses and trail times depend only on `now`. Also runs the budgeted z sweep. */
   frame(now: number): Frame {
-    // ponytail: ~1200 fresh pose objects per frame, and deck recomputes the instance attributes
-    //           anyway. Reuse a pool if GC shows up in a profile.
     const poses: VehiclePose[] = [];
     for (const [id, v] of this.#vehicles) {
-      if (isStale(v, now)) continue;
-      const { position, bearing } = drawnAt(v.tween, v.trail.at(-1)!.position, v.bearing ?? 0, now);
-      poses.push({ id, mode: v.latest.mode, position, bearing });
+      if (!this.#hidden(v, now)) poses.push({ id, mode: v.latest.mode, ...poseOn(v.path, now) });
     }
     this.#sweepZ();
     this.#trails ??= [...this.#vehicles]
-      .filter(([, v]) => v.trail.length >= 2)
-      .map(([id, v]) => ({ id, mode: v.latest.mode, path: v.trail.map((p) => p.position), times: v.trail.map((p) => p.drawnAt) }));
+      .filter(([, v]) => v.path.length >= 2)
+      .map(([id, v]) => ({ id, mode: v.latest.mode, path: v.path.map((p) => p.position), times: v.path.map((p) => p.at) }));
     return { poses, trails: this.#trails };
   }
 
-  /** The info card's data, or null when the vehicle is unknown or stale. */
+  /** The newest report's journey, or null exactly when `frame(now)` hides the vehicle. */
   info(id: VehicleId, now: number): VehicleInfo | null {
     const v = this.#vehicles.get(id);
-    return v && !isStale(v, now) ? { id, mode: v.latest.mode, journey: v.latest.journey } : null;
+    return v && !this.#hidden(v, now) ? { id, mode: v.latest.mode, journey: v.latest.journey } : null;
+  }
+
+  /** The stale rule. Silent too long, or ended and the model has reached the end of its path. */
+  #hidden(v: VehicleState, now: number): boolean {
+    return now - v.latest.recordedAt > STALE_MS || (v.latest.journeyEnded && now >= v.path[v.path.length - 1].at);
+  }
+
+  #askShape(journey: JourneyId, now: number): void {
+    const entry = this.#shapes.get(journey);
+    if (entry && (entry.state !== "asked" || now - entry.requestedAt < retryWaitMs(entry.attempts))) return;
+    const asked: ShapeEntry = { state: "asked", requestedAt: now, attempts: (entry?.state === "asked" ? entry.attempts : 0) + 1 };
+    this.#shapes.set(journey, asked);
+    this.#shapeOf(journey).then(
+      (points) => {
+        if (this.#shapes.get(journey) !== asked) return;
+        const shape = points && prepareShape(points);
+        this.#shapes.set(journey, shape ? { state: "ready", shape } : { state: "none" });
+      },
+      () => {},
+    );
+  }
+
+  #readyShape(journey: JourneyId | null): RouteShape | null {
+    const entry = journey && this.#shapes.get(journey);
+    return entry && entry.state === "ready" ? entry.shape : null;
+  }
+
+  /** Starts a run at `r`: a new vehicle, a hidden one, or a fix whose lag would pass MAX_LAG_MS. */
+  #startRun(id: VehicleId, v: VehicleState | undefined, r: VehicleReport, arrival: number): VehicleState {
+    const path = v?.path ?? [];
+    const last = path.at(-1);
+    let drawn = r.position;
+    let cursor: Cursor | null = null;
+    const shape = this.#readyShape(r.journeyId);
+    const seed = shape && pickByBearing(passesNear(shape, r.position, 0, Infinity), r.bearing);
+    if (shape && seed && r.journeyId) {
+      cursor = { journey: r.journeyId, along: seed.along, recordedAt: r.recordedAt };
+      drawn = pointAlong(shape, seed.along);
+    }
+    path.push({
+      position: [drawn[0], drawn[1], this.#elevationAt(drawn) ?? last?.position[2] ?? 0],
+      at: Math.max(last?.at ?? -Infinity, Math.min(arrival, r.recordedAt + DELAY_MS)),
+      heading: r.bearing ?? last?.heading ?? 0,
+    });
+    const fix = { position: r.position, recordedAt: r.recordedAt, bearing: r.bearing };
+    if (v) {
+      v.latest = r;
+      v.fix = fix;
+      v.cursor = cursor;
+      return v;
+    }
+    const state: VehicleState = { latest: r, fix, cursor, path, zEpoch: -1 };
+    this.#vehicles.set(id, state);
+    return state;
+  }
+
+  /** One segment from the path's last point to fix `r`, leaving at `leaves`. */
+  #appendSegment(v: VehicleState, r: VehicleReport, leaves: number): void {
+    const last = v.path[v.path.length - 1];
+    const { drawn, glide } = this.#snap(v, r);
+
+    const points: LngLat[] = [];
+    const cum: number[] = [];
+    let prev = flat(last.position);
+    let length = 0;
+    for (const p of [...glide, drawn]) {
+      const d = distanceMetres(prev, p);
+      if (d < 1e-3 && p !== drawn) continue;
+      length += d;
+      points.push(p);
+      cum.push(length);
+      prev = p;
+    }
+
+    const span = r.recordedAt - v.fix.recordedAt;
+    const lag = leaves - v.fix.recordedAt - DELAY_MS;
+    const arrives = Math.max(leaves + crossMs(span, lag), leaves + (length / SPEED_CAP_MPS[r.mode]) * 1000);
+    // A hold point keeps TripsLayer's trail head under the model while it waits.
+    if (leaves > last.at) v.path.push({ position: last.position, at: leaves, heading: last.heading });
+    let heading = last.heading;
+    let z = last.position[2];
+    prev = flat(last.position);
+    points.forEach((p, i) => {
+      if (distanceMetres(prev, p) > 0.01) heading = bearingBetween(prev, p);
+      z = this.#elevationAt(p) ?? z;
+      const at = length > 0 ? leaves + ((arrives - leaves) * cum[i]) / length : arrives;
+      v.path.push({ position: [p[0], p[1], z], at, heading });
+      prev = p;
+    });
+    v.fix = { position: r.position, recordedAt: r.recordedAt, bearing: r.bearing };
   }
 
   /**
-   * Round-robin over known vehicles with zEpoch < terrainEpoch: re-sample every trail point
-   * and tween.from (a null sample keeps the old z), then set zEpoch = terrainEpoch. Only a
-   * full sweep of one vehicle marks it current, so ingest never hides unswept points.
-   * Stops after Z_BUDGET_MS of `performance.now()` and resumes from a cursor next frame.
-   * Drops `#trails` if any z changed.
+   * Where fix `r` is drawn, and the shape points to glide through before it (none for a straight
+   * step). Moves the cursor. See Snapping in docs/vehicle-store.md.
+   */
+  #snap(v: VehicleState, r: VehicleReport): { drawn: LngLat; glide: LngLat[] } {
+    const journey = r.journeyId;
+    const shape = this.#readyShape(journey);
+    if (!shape || !journey) return { drawn: r.position, glide: [] };
+
+    let cursor = v.cursor?.journey === journey ? v.cursor : null;
+    if (!cursor) {
+      const seed = pickByBearing(passesNear(shape, v.fix.position, 0, Infinity), v.fix.bearing);
+      if (seed) cursor = v.cursor = { journey, along: seed.along, recordedAt: v.fix.recordedAt };
+    }
+
+    let along: number | null = null;
+    let glides = false;
+    if (cursor) {
+      const reach = (SPEED_CAP_MPS[r.mode] * (r.recordedAt - cursor.recordedAt)) / 1000 + OFF_SHAPE_M;
+      const earliest = passesNear(shape, r.position, cursor.along - BACKWARD_GRACE_M, cursor.along + reach)[0];
+      if (earliest) {
+        along = Math.max(earliest.along, cursor.along);
+        glides = cursor.recordedAt === v.fix.recordedAt;
+      }
+    }
+    if (along === null) {
+      const all = passesNear(shape, r.position, 0, Infinity);
+      along = (cursor ? nearestTo(all, cursor.along) : pickByBearing(all, r.bearing))?.along ?? null;
+    }
+    if (along === null) return { drawn: r.position, glide: [] };
+
+    const drawn = pointAlong(shape, along);
+    v.cursor = { journey, along, recordedAt: r.recordedAt };
+    if (!glides || !cursor) return { drawn, glide: [] };
+    const start = pointAlong(shape, cursor.along);
+    if (along - cursor.along > DETOUR_FACTOR * distanceMetres(start, drawn) + DETOUR_SLACK_M) return { drawn, glide: [] };
+    return { drawn, glide: [start, ...verticesBetween(shape, cursor.along, along)] };
+  }
+
+  /**
+   * Round-robin over vehicles behind the terrain epoch: re-sample every path point (a null sample keeps
+   * the old z). Only a full sweep of one vehicle marks it current. Stops after Z_BUDGET_MS and resumes
+   * from a cursor next frame.
    */
   #sweepZ(): void {
-    // ponytail: up to ~1200 × ~75 points after a big tile load, spread over frames. If z lags
-    //           visibly after a pan, sweep viewport vehicles first.
     const start = performance.now();
     let changed = false;
     let i = 0;
     for (const v of this.#vehicles.values()) {
       if (i++ < this.#zCursor || v.zEpoch >= this.#terrainEpoch) continue;
-      for (const p of v.trail) {
-        const z = this.elevationAt([p.position[0], p.position[1]]);
+      for (const p of v.path) {
+        const z = this.#elevationAt([p.position[0], p.position[1]]);
         if (z !== null && z !== p.position[2]) {
           p.position = [p.position[0], p.position[1], z];
           changed = true;
         }
       }
-      const f = v.tween.from;
-      const fz = this.elevationAt([f[0], f[1]]);
-      if (fz !== null) v.tween.from = [f[0], f[1], fz];
       v.zEpoch = this.#terrainEpoch;
       if (performance.now() - start > Z_BUDGET_MS) {
         this.#zCursor = i;
@@ -232,7 +372,59 @@ export class VehicleStore {
   }
 }
 
-/** The stale rule, in one place. A null status arrives as `journeyEnded: false`, so it stays alive. */
-function isStale(v: VehicleState, now: number): boolean {
-  return v.latest.journeyEnded || now - v.latest.recordedAt > STALE_MS;
+/**
+ * Wall time to play `spanMs` of reports, starting `lagMs` behind the 35 s target. The rate is CATCH_UP
+ * while behind and EASE_IN while ahead. Closing the lag at rate k covers lag × k / (k − 1) of reports,
+ * and the rest of the span plays at 1x, so a span that closes it lands exactly on target.
+ */
+function crossMs(spanMs: number, lagMs: number): number {
+  if (lagMs === 0) return spanMs;
+  const rate = lagMs > 0 ? CATCH_UP : EASE_IN;
+  return spanMs <= (lagMs * rate) / (rate - 1) ? spanMs / rate : spanMs - lagMs;
+}
+
+function retryWaitMs(attempts: number): number {
+  return Math.min(SHAPE_RETRY_MS * 2 ** (attempts - 1), SHAPE_RETRY_MAX_MS);
+}
+
+/** Signed turn from heading a to heading b, −180 to 180. */
+function turnBy(a: number, b: number): number {
+  return ((b - a + 540) % 360) - 180;
+}
+
+/** Whole-shape projection: the earliest pass within 90° of the bearing, else the earliest pass. */
+function pickByBearing(passes: Pass[], bearing: number | null): Pass | undefined {
+  return (bearing === null ? undefined : passes.find((p) => Math.abs(turnBy(p.heading, bearing)) <= 90)) ?? passes[0];
+}
+
+function nearestTo(passes: Pass[], along: number): Pass | undefined {
+  let best: Pass | undefined;
+  for (const p of passes) if (!best || Math.abs(p.along - along) < Math.abs(best.along - along)) best = p;
+  return best;
+}
+
+function samePosition(a: LngLat, b: LngLat): boolean {
+  return a[0] === b[0] && a[1] === b[1];
+}
+
+function flat(p: Position3): LngLat {
+  return [p[0], p[1]];
+}
+
+/** The path sampled at `now`. The heading eases from the previous piece's over the first TURN_M. */
+function poseOn(path: PathPoint[], now: number): { position: Position3; bearing: number } {
+  let i = path.length - 1;
+  while (i > 0 && path[i].at > now) i--;
+  if (i === path.length - 1 || path[i].at > now) return { position: path[i].position, bearing: path[i].heading };
+  const a = path[i];
+  const b = path[i + 1];
+  const t = (now - a.at) / (b.at - a.at);
+  const position: Position3 = [
+    a.position[0] + (b.position[0] - a.position[0]) * t,
+    a.position[1] + (b.position[1] - a.position[1]) * t,
+    a.position[2] + (b.position[2] - a.position[2]) * t,
+  ];
+  const len = distanceMetres(flat(a.position), flat(b.position));
+  const k = len > 0.01 ? Math.min(1, (t * len) / TURN_M) : 1;
+  return { position, bearing: (a.heading + turnBy(a.heading, b.heading) * k + 360) % 360 };
 }

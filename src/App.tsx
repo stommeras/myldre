@@ -15,7 +15,10 @@ import type { VehicleId } from "./vehicles/types";
 export function App() {
   let container!: HTMLDivElement;
   let map: MapLibreMap | undefined;
-  const store = new VehicleStore((p) => map?.queryTerrainElevation([p[0], p[1]]) ?? null);
+  const store = new VehicleStore({
+    elevationAt: (p) => map?.queryTerrainElevation([p[0], p[1]]) ?? null,
+    shapeOf: () => Promise.resolve(null),
+  });
 
   const [version, setVersion] = createSignal(store.version);
   const [selected, setSelected] = createSignal<VehicleId | null>(null);

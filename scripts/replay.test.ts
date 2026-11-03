@@ -26,7 +26,7 @@ it.runIf(file)("replays a capture", () => {
   };
   const messages = capture.messages.filter((m) => m.msg.type === "next");
 
-  const store = new VehicleStore(() => 0);
+  const store = new VehicleStore({ elevationAt: () => 0, shapeOf: () => Promise.resolve(null) });
   const latest = new Map<string, VehicleReport>();
   let now = messages[0]!.t;
   vehicleSource((reports) => {
