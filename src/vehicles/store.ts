@@ -2,7 +2,7 @@ import { bearingBetween, distanceMetres, OFF_SHAPE_M, passesNear, pointAlong, pr
 import type { Journey, JourneyId, LngLat, Mode, Position3, ShapeLookup, VehicleId, VehicleReport } from "./types";
 
 /** A report older than this hides the vehicle. */
-export const STALE_MS = 2 * 60_000;
+export const STALE_MS = 3 * 60_000;
 /** How long a trail is kept and how long it takes to fade out. The trail layer reads this too. */
 export const TRAIL_MS = 5 * 60_000;
 /** The first wait before asking again for an unanswered journey. Each later wait doubles, up to 10 minutes. */

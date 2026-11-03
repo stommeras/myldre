@@ -290,11 +290,11 @@ describe("playback clock", () => {
     await receive(s, [at(0, 0, 0, null), at(10, 100, 0, null)]);
     s.ingest([at(70, 6100, 0, null)], 72_000);
     // leaves = 72, lag = 72 - 10 - 35 = 27, so 1.25x says 60 / 1.25 = 48 s. The cap says 6000 / 25 = 240 s,
-    // so the model reaches 6100 m at 312 s. Silent after its 70 s report, it is hidden from 190 s, mid-road.
-    expect(poseAt(s, 200_000)).toBeUndefined();
-    s.ingest([at(200, 6500, 0, null)], 202_000);
-    // The new run starts at max(312, min(202, 200 + 35)) = 312, so the old path still plays until then.
-    expectAt(s, 250_000, 100 + SPEED_CAP_MPS.bus * (250 - 72), 0); // 4550 m
+    // so the model reaches 6100 m at 312 s. Silent after its 70 s report, it is hidden from 250 s, mid-road.
+    expect(poseAt(s, 260_000)).toBeUndefined();
+    s.ingest([at(260, 6500, 0, null)], 262_000);
+    // The new run starts at max(312, min(262, 260 + 35)) = 312, so the old path still plays until then.
+    expectAt(s, 280_000, 100 + SPEED_CAP_MPS.bus * (280 - 72), 0); // 5300 m
     expectAt(s, 312_000, 6500, 0);
   });
 });

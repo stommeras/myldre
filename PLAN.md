@@ -13,7 +13,7 @@ A tilted 3D night map of Norway with live public transport vehicles moving on re
 - Data: one subscription to `wss://api.entur.io/realtime/v2/vehicles/subscriptions` (graphql-ws). Each message is a batch of full vehicle states, upserted by `vehicleId`. The browser sends the client name as a query param, `?ET-Client-Name=steff-myldre`, because it can't set headers on a WebSocket.
 - Motion: each vehicle has a playback clock 35 s behind real time. The clock waits at the newest report and catches up at 1.25x. Between two reports the vehicle glides along its service journey's shape at constant speed. It falls back to a straight line when a report is over 40 m off the shape or projects backwards. Text such as "now at" in the info card comes from the newest report, not the drawn position. See SPIKES.md, route-shape glide.
 - Shapes: the subscription also asks for `serviceJourney { id }`. Journey Planner v3 resolves it to its journey pattern's `pointsOnLink`, cached per pattern. The browser fetches shapes until the relay exists, and then the relay takes it over.
-- Stale vehicles are hidden: `lastUpdated` older than 2 minutes, or status COMPLETED or CANCELLED. A null status counts as alive.
+- Stale vehicles are hidden: `lastUpdated` older than 3 minutes, or status COMPLETED or CANCELLED. A null status counts as alive.
 - `speed` is almost always null. Speed comes from consecutive positions of the same vehicle. A null `bearing` keeps the previous bearing.
 - A trail belongs to the vehicle and fades over time. It does not reset when the vehicle starts a new journey.
 - Modes with their own model: bus, coach (tinted bus), ferry, train. Everything else uses the generic model. Metro and tram have almost no data.
