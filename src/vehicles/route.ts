@@ -52,7 +52,15 @@ export function passesNear(shape: RouteShape, p: LngLat, from: number, to: numbe
   const passes: Pass[] = [];
   let best: { pass: Pass; d: number } | null = null;
   let prevHeading: number | null = null;
-  for (let i = 1; i < xs.length; i++) {
+  // Segments that end before the window can't be near, so start at the first that reaches it.
+  let lo = 1;
+  let hi = xs.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid] < from - EPS_M) lo = mid + 1;
+    else hi = mid;
+  }
+  for (let i = lo; i < xs.length && cum[i - 1] <= to + EPS_M; i++) {
     const vx = xs[i] - xs[i - 1];
     const vy = ys[i] - ys[i - 1];
     const t = Math.max(0, Math.min(1, ((px - xs[i - 1]) * vx + (py - ys[i - 1]) * vy) / (vx * vx + vy * vy)));
