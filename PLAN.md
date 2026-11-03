@@ -53,11 +53,11 @@ Build order: M1, then M5, then M2 to M4. Motion was the go/no-go question. Berge
 
 ### M5: Motion along the road (Bergen, before M2)
 
-- [ ] Delayed playback clock per vehicle: 35 s behind, waits at the newest report, catches up at 1.25x
-- [ ] Parse `serviceJourney.id`, fetch and cache its pattern's `pointsOnLink`
-- [ ] Glide along the shape between two reports, with a straight fallback when a report is off the shape or runs backwards
-- [ ] Projection that searches forward from the last known distance, so out-and-back spurs and terminal loops don't snap to the wrong pass
-- [ ] Tunnel freezes: an exactly repeated location counts as no fix, and the vehicle glides across the whole freeze. A speed cap lets it arrive late after a freeze instead of a longer playback delay.
+- [x] Delayed playback clock per vehicle: 35 s behind, waits at the newest report, catches up at 1.25x
+- [x] Parse `serviceJourney.id`, fetch and cache its pattern's `pointsOnLink`
+- [x] Glide along the shape between two reports, with a straight fallback when a report is off the shape or runs backwards
+- [x] Projection that searches forward from the last known distance, so out-and-back spurs and terminal loops don't snap to the wrong pass
+- [x] Tunnel freezes: an exactly repeated location counts as no fix, and the vehicle glides across the whole freeze. A speed cap lets it arrive late after a freeze instead of a longer playback delay.
 
 ### M6: Follow-vehicle camera
 

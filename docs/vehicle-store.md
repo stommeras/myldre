@@ -471,6 +471,11 @@ The open questions from the interrogate round were settled with the recommended 
 - `queryTerrainElevation` takes 0.4 to 1.2 µs a call, so the 2 ms z budget covers about 1,700 to 4,600 queries a frame (M1, measured).
 - `store.frame` took under 0.1 ms at p95 for 110 Bergen vehicles in M1, and 0.4 ms right after `terrainChanged()`.
 
-## Next implementation step
+## Measured in M5 (2026-11-03)
 
-Add `JourneyId`, `VehicleReport.journeyId` and `ShapeLookup` to `types.ts` and change the `VehicleStore` constructor so the new `store.test.ts` type-checks. Then delete `motion.ts`, build the path and schedule with straight segments until the schedule, trail and visibility tests pass, add `route.ts` with `passesNear` and the snapping rules, and update the replay oracle to hide ended vehicles at playback time.
+The implementation passes the unchanged spec, 62 of 62, with `tsc --noEmit` clean.
+
+- **Speed caps stay at the sign-off values.** A replay of the Sunday Bergen capture with Viterbi-matched shapes and the caps lifted gave a bus p99 segment speed of 26.1 m/s over 4685 segments. Every faster segment was a freeze or tunnel crossing, up to 2155 m in 10.4 s. Setting the bus cap just above that p99 is blocked by the spec. The 145 s freeze test assumes the cap binds on a 3600 m crossing whose schedule takes 142.4 s, so the bus cap must stay at or below 25.28 m/s. At 25 m/s the cap binds on 44 of 4679 bus segments (0.9%). Coach, ferry and train each had a single vehicle in the capture, so their p99 is one sample's maximum and calibrates nothing. They keep 30, 20 and 70 m/s. Raising the bus cap means changing that test first.
+- **Clock skew needs no offset.** In the live check at zoom 15 over Bergen, `now − recordedAt` at ingest was median 2.25 s and p99 6.45 s over 2230 reports, once the first 10 s of subscribe burst had passed. The median is within 5 s of the spike's 2 s, so the store gets no offset estimate.
+- **Live behaviour.** Every one of 3083 live reports named a service journey. Journey Planner answered 22 POSTs, the start-up burst as 6, 50, 50, 50 and 28 aliases, one at a time, all 200 at p50 88 ms and at most 174 ms. Over three 5 s windows at 60 fps, with 180 to 187 vehicles visible, no model moved more than 0.5 m between frames. The page logged no console errors.
+- **Replay oracle.** The oracle now hides an ended vehicle at playback time. On the Norway capture it counts 982 visible, the same as the store, where the old oracle counted 981.
