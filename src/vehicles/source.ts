@@ -4,7 +4,7 @@
  * other file changes. Wire types stay in here.
  */
 import { createClient } from "graphql-ws";
-import type { Mode, VehicleId, VehicleReport, VehicleSource } from "./types";
+import type { JourneyId, Mode, VehicleId, VehicleReport, VehicleSource } from "./types";
 
 /** The browser can't set headers on a WebSocket, so the client name rides on the URL (SPIKES.md). */
 const URL = "wss://api.entur.io/realtime/v2/vehicles/subscriptions?ET-Client-Name=steff-myldre";
@@ -25,6 +25,7 @@ const QUERY = /* GraphQL */ `
       location { latitude longitude }
       line { publicCode }
       codespace { codespaceId }
+      serviceJourney { id }
     }
   }
 `;
@@ -41,6 +42,7 @@ interface WireVehicle {
   delay?: number | null;
   destinationName?: string | null;
   line?: { publicCode?: string | null } | null;
+  serviceJourney?: { id?: string | null } | null;
 }
 
 export const vehicleSource: VehicleSource = (onReports) => {
@@ -76,6 +78,7 @@ function parseVehicle(w: WireVehicle): VehicleReport[] {
   const codespace = w.codespace?.codespaceId;
   if (!w.vehicleId || !codespace || !Number.isFinite(recordedAt) || !isFiniteNumber(lat) || !isFiniteNumber(lng)) return [];
   const line = w.line?.publicCode;
+  const journeyId = w.serviceJourney?.id;
   return [
     {
       id: `${codespace}:${w.vehicleId}` as VehicleId,
@@ -87,6 +90,7 @@ function parseVehicle(w: WireVehicle): VehicleReport[] {
       journey: line
         ? { line, destination: w.destinationName ?? null, delaySeconds: isFiniteNumber(w.delay) ? w.delay : null }
         : null,
+      journeyId: journeyId ? (journeyId as JourneyId) : null,
     },
   ];
 }

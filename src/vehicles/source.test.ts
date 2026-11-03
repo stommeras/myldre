@@ -24,6 +24,7 @@ const wire = (over: object) => ({
   delay: 12,
   destinationName: "Sentrum",
   line: { publicCode: "3" },
+  serviceJourney: { id: "SKY:ServiceJourney:1" },
   ...over,
 });
 
@@ -34,6 +35,8 @@ it("parses wire vehicles into reports", () => {
     data: {
       vehicles: [
         wire({}),
+        wire({ vehicleId: "5", serviceJourney: null }),
+        wire({ vehicleId: "6", serviceJourney: { id: "" } }),
         wire({ vehicleId: "2", vehicleStatus: "COMPLETED", mode: "TRAM", bearing: null, line: null }),
         wire({ vehicleId: "3", location: { latitude: null, longitude: 5.3 } }),
         wire({ vehicleId: "4", codespace: null }),
@@ -49,7 +52,10 @@ it("parses wire vehicles into reports", () => {
       journeyEnded: false,
       mode: "bus",
       journey: { line: "3", destination: "Sentrum", delaySeconds: 12 },
+      journeyId: "SKY:ServiceJourney:1",
     },
+    expect.objectContaining({ id: "SKY:5", journeyId: null }),
+    expect.objectContaining({ id: "SKY:6", journeyId: null }),
     expect.objectContaining({ id: "SKY:2", journeyEnded: true, mode: "other", bearing: null, journey: null }),
   ]);
 });

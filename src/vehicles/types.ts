@@ -7,6 +7,10 @@ declare const vehicleIdBrand: unique symbol;
 /** A physical vehicle's identity, stable across journeys. Only the source's parser mints one. */
 export type VehicleId = string & { readonly [vehicleIdBrand]: true };
 
+declare const journeyIdBrand: unique symbol;
+/** Entur's service journey id, e.g. `SKY:ServiceJourney:24-202789-20949097`. Only the source's parser mints one. */
+export type JourneyId = string & { readonly [journeyIdBrand]: true };
+
 /** [longitude, latitude] in degrees. A tuple so it goes straight into deck.gl accessors. */
 export type LngLat = readonly [lng: number, lat: number];
 
@@ -31,7 +35,7 @@ export interface Journey {
 /**
  * One full state of one vehicle at one moment. Full, never a delta: a source that receives
  * deltas expands them before emitting. There is no `speed` field. Speed is derived from
- * consecutive positions (`speedMps` in motion.ts), so there is one way to get it.
+ * consecutive positions, so there is one way to get it.
  */
 export interface VehicleReport {
   id: VehicleId;
@@ -47,7 +51,18 @@ export interface VehicleReport {
   journeyEnded: boolean;
   mode: Mode;
   journey: Journey | null;
+  /** The service journey, or null when the feed didn't name one. Names the route shape. */
+  journeyId: JourneyId | null;
 }
+
+/**
+ * Resolves a journey to its route shape, the journey pattern's `pointsOnLink` decoded to lng/lat.
+ * Resolves null when the journey has no shape, and the store doesn't ask again while it keeps that
+ * journey's entry. Rejects on a transient failure. The store asks again for an unanswered or rejected
+ * journey 30 s after the request, then after 60 s, 120 s and so on up to 10 minutes. Should settle
+ * within 10 s. Implemented once, by `shapes.ts`.
+ */
+export type ShapeLookup = (journey: JourneyId) => Promise<readonly LngLat[] | null>;
 
 /**
  * Where vehicle reports come from: the one seam between a wire format and the app.
