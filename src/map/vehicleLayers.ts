@@ -5,14 +5,7 @@ import { MapLibreOverlay } from "@deck.gl/maplibre";
 import { ScenegraphLayer } from "@deck.gl/mesh-layers";
 import type { Map as MapLibreMap, MapSourceDataEvent } from "maplibre-gl";
 import { TRAIL_MS, type Frame, type TrailPath, type VehicleStore, type VehiclePose } from "../vehicles/store";
-import type { Mode, VehicleId } from "../vehicles/types";
-
-/**
- * TripsLayer timestamps are float32 on the GPU, and epoch ms don't fit. Times go to deck as
- * seconds since page load. This is the only place that conversion exists.
- */
-const T0 = Date.now();
-const seconds = (epochMs: number) => (epochMs - T0) / 1000;
+import type { Clock, Mode, VehicleId } from "../vehicles/types";
 
 const GENERIC_MODEL = "/models/generic.glb";
 /** The nose is glTF +Z, which faces south after the 90° roll. Checked by eye with side views at bearings 90 and 225. */
@@ -37,8 +30,13 @@ const MODELS_ZOOM = 11;
 export function attachVehicleLayers(
   map: MapLibreMap,
   store: VehicleStore,
+  clock: Clock,
   onPick: (id: VehicleId | null) => void,
 ): () => void {
+  // TripsLayer timestamps are float32 on the GPU, and epoch ms don't fit. Times go to deck as
+  // seconds since attach. This is the only place that conversion exists.
+  const t0 = clock.now();
+  const seconds = (epochMs: number) => (epochMs - t0) / 1000;
   const overlay = new MapLibreOverlay({
     interleaved: true,
     layers: [],
@@ -58,8 +56,8 @@ export function attachVehicleLayers(
   // document.hidden if battery matters.
   // M6 follow camera: take a `followed: () => VehicleId | null` here and jumpTo its pose from `f`.
   let raf = requestAnimationFrame(function tick() {
-    const now = Date.now();
-    overlay.setProps({ layers: vehicleLayers(store.frame(now), map.getZoom(), now) });
+    const now = clock.now();
+    overlay.setProps({ layers: vehicleLayers(store.frame(now), map.getZoom(), seconds(now), seconds) });
     raf = requestAnimationFrame(tick);
   });
 
@@ -76,7 +74,7 @@ export function attachVehicleLayers(
  * instance. `trails` keeps its reference until a trail changes, so between changes the trail
  * layer only updates its `currentTime` uniform.
  */
-function vehicleLayers({ poses, trails }: Frame, zoom: number, now: number): Layer[] {
+function vehicleLayers({ poses, trails }: Frame, zoom: number, nowSeconds: number, seconds: (epochMs: number) => number): Layer[] {
   const models = modelOpacity(zoom);
   // No beforeId: vehicles draw above the basemap labels (SPIKES.md, deck.gl#10700).
   // M3: one ScenegraphLayer per model, from a Record<Mode, url>, each fed poses filtered by mode.
@@ -91,7 +89,7 @@ function vehicleLayers({ poses, trails }: Frame, zoom: number, now: number): Lay
       getPath: (d) => d.path.flat(),
       getTimestamps: (d) => d.times.map(seconds),
       getColor: (d) => GLOW[d.mode],
-      currentTime: seconds(now),
+      currentTime: nowSeconds,
       trailLength: TRAIL_MS / 1000,
       fadeTrail: true,
       widthMinPixels: 2,

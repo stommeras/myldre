@@ -30,8 +30,8 @@ export const QUERY = /* GraphQL */ `
   }
 `;
 
-/** Wire shape. Not exported. Everything nullable because it's untrusted input. */
-interface WireVehicle {
+/** Wire shape. Everything nullable because it's untrusted input. */
+export interface WireVehicle {
   vehicleId?: string | null;
   codespace?: { codespaceId?: string | null } | null;
   lastUpdated?: string | null;
@@ -71,7 +71,7 @@ export const vehicleSource: VehicleSource = (onReports) => {
  * own vehicle ids, so the id is prefixed with the codespace, e.g. `SKY:101`.
  * Returns [] or [report] for flatMap.
  */
-function parseVehicle(w: WireVehicle): VehicleReport[] {
+export function parseVehicle(w: WireVehicle): VehicleReport[] {
   const recordedAt = Date.parse(w.lastUpdated ?? "");
   const lat = w.location?.latitude;
   const lng = w.location?.longitude;

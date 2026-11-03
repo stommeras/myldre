@@ -77,3 +77,6 @@ export type ShapeLookup = (journey: JourneyId) => Promise<readonly LngLat[] | nu
  * The store applies the stale rule either way.
  */
 export type VehicleSource = (onReports: (reports: VehicleReport[]) => void) => () => void;
+
+/** The app's one notion of "now", epoch ms. Live is Date.now at 1x. Replay is recording time sped up. */
+export interface Clock { now(): number; readonly speed: number }
