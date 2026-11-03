@@ -74,9 +74,9 @@ async function send(batch: Waiter[]): Promise<void> {
       const head = isObject(e) && Array.isArray(e.path) ? e.path[0] : undefined;
       if (typeof head === "string") failed.add(head);
     }
-    // Errors with no alias path, or no data at all, can't be pinned on one journey.
+    // An error with no alias path can't be pinned on one journey, so it fails them all.
     const unattributed = errors.some((e) => !isObject(e) || !Array.isArray(e.path) || typeof e.path[0] !== "string");
-    if (data === null || (unattributed && failed.size === 0)) {
+    if (data === null || unattributed) {
       throw new Error(`Journey Planner error: ${JSON.stringify(errors).slice(0, 200)}`);
     }
     batch.forEach((w, i) => {
