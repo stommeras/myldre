@@ -4,10 +4,11 @@ A tilted 3D night map of Norway with live public transport vehicles moving on re
 
 ## Settled decisions
 
-- Look: stylized toy diorama. Low-poly, flat-shaded vehicles scaled up about 3x, muted dark base, glowing accents.
+- Look: blue-black base with water, faint roads and city names only. Vehicles are glowing dots with fading trails, colored by mode and drawn with additive blending, so moving things are the only light on the map. Standing vehicles dim. Close up, dots crossfade to low-poly, flat-shaded models scaled up about 3x.
+- Replay: the main view plays recorded history sped up, with speed toggles (1x, 10x, 30x, 60x, 120x). The live feed is too sparse to look busy at 1x. The swarm prototype settled this (branch `prototype/swarm`, 2026-11-03): all of Norway at 60x and a tilted city view at 30x both looked busy, and the street-level live view did not.
 - Frontend: SolidJS + Vite + TypeScript SPA. Map and deck.gl state live outside Solid's reactivity.
 - Map: MapLibre GL JS 6, OpenFreeMap base tiles with a dark style, AWS Terrarium terrain with 1.5x exaggeration (tunable).
-- Camera: the map opens tilted at zoom 15 over Bergen centre. The shape glide only shows from about zoom 15 up (SPIKES.md, route-shape glide).
+- Camera: the map opens on all of Norway, flat, at about zoom 4.7. Zooming into a city gives the tilted view. The shape glide only shows from about zoom 15 up (SPIKES.md, route-shape glide), but rail needs shapes when zoomed out too: the prototype's straight lines between sparse train reports cut visibly across terrain.
 - Vehicles: deck.gl `ScenegraphLayer`, mounted via `MapLibreOverlay` from `@deck.gl/maplibre` in interleaved mode, drawn above the basemap labels. Each vehicle's z comes from `map.queryTerrainElevation()`, because `TerrainExtension` doesn't read MapLibre's terrain. Models at every zoom, crossfading to glowing dots when zoomed out. No clustering.
 - Data: one subscription to `wss://api.entur.io/realtime/v2/vehicles/subscriptions` (graphql-ws). Each message is a batch of full vehicle states, upserted by `vehicleId`. The browser sends the client name as a query param, `?ET-Client-Name=steff-myldre`, because it can't set headers on a WebSocket.
 - Motion: each vehicle has a playback clock 35 s behind real time. The clock waits at the newest report and catches up at 1.25x. Between two reports the vehicle glides along its service journey's shape at constant speed. It falls back to a straight line when a report is over 40 m off the shape or projects backwards. Text such as "now at" in the info card comes from the newest report, not the drawn position. See SPIKES.md, route-shape glide.
@@ -21,7 +22,15 @@ A tilted 3D night map of Norway with live public transport vehicles moving on re
 
 ## Milestones
 
-Build order: M1, then M5, then M2 to M4. Motion was the go/no-go question. Bergen is the cheap place to build it.
+Build order: M1, then M5, then M8, then M2 to M4. Motion was the go/no-go question. Bergen is the cheap place to build it. The swarm prototype answered a second go/no-go: the project works zoomed out and sped up.
+
+### M8: Swarm replay (next)
+
+- [ ] Recorder that stores all-Norway positions as compact records (prototype: `prototype/swarm/capture.mjs` on branch `prototype/swarm`)
+- [ ] Replay clock with speed toggles, looping over the recording
+- [ ] Opening view on all of Norway, blue-black base, additive glowing dots and fading trails per mode
+- [ ] Rail follows its shape when zoomed out
+- [ ] Open question: where recordings live and how long they span. The relay (M4) is the natural recorder.
 
 ### M1: Bergen moving, night mood (one weekend)
 
