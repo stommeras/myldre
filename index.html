@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Myldre</title>
     <style>
-      html, body, #root, .map { margin: 0; height: 100%; background: #0b0d12; }
+      html, body, #root, .map { margin: 0; height: 100%; background: #04060a; }
+      .speed-bar { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px;
+        padding: 4px; border-radius: 999px; background: #0a1220cc; box-shadow: 0 4px 20px #0008; font: 13px/1 ui-monospace, monospace; }
+      .speed-bar button { font: inherit; color: #8aa0bf; background: none; border: 0; border-radius: 999px; padding: 7px 12px; cursor: pointer; }
+      .speed-bar button.on { color: #04060a; background: #cfe3ff; }
     </style>
   </head>
   <body>

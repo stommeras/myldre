@@ -1,8 +1,9 @@
-import { createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { BERGEN, createMap, NORWAY } from "./map/createMap";
 import { attachVehicleLayers } from "./map/vehicleLayers";
 import { InfoCard } from "./ui/InfoCard";
+import { SpeedBar } from "./ui/SpeedBar";
 import { journeyShapes } from "./vehicles/shapes";
 import { loadRecording, ReplayClock, replaySource } from "./vehicles/replay";
 import { vehicleSource } from "./vehicles/source";
@@ -27,6 +28,12 @@ export function App() {
 
   const [version, setVersion] = createSignal(store.version);
   const [selected, setSelected] = createSignal<VehicleId | null>(null);
+  const [replay, setReplay] = createSignal<ReplayClock | null>(null);
+  const [speed, setSpeed] = createSignal(Number(params.get("speed")) || 60);
+  const changeSpeed = (s: number) => {
+    replay()?.setSpeed(s);
+    setSpeed(s);
+  };
   const info = createMemo(() => {
     version();
     const id = selected();
@@ -56,8 +63,9 @@ export function App() {
       loadRecording(`/recordings/${name}.ndjson.gz`).then(
         (recording) => {
           if (unmounted) return;
-          const replayClock = new ReplayClock(recording, Number(params.get("speed")) || 1);
+          const replayClock = new ReplayClock(recording, speed());
           clock = replayClock;
+          setReplay(replayClock);
           start(replaySource(recording, replayClock));
         },
         (err) => console.error("recording failed to load", err),
@@ -75,6 +83,9 @@ export function App() {
     <>
       <div ref={container} class="map" />
       <InfoCard info={info()} onClose={() => setSelected(null)} />
+      <Show when={replay()}>
+        <SpeedBar speed={speed()} onSpeed={changeSpeed} />
+      </Show>
     </>
   );
 }

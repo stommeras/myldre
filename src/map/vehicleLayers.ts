@@ -24,6 +24,13 @@ const MODELS_ZOOM = 11;
 /** Dot core radius in pixels at all of Norway (zoom 4.7) and at city zoom (11.6), from the swarm prototype. */
 const DOT_PX = { far: 1.6, near: 3 };
 const HALO_SCALE = 4;
+/**
+ * A trail fades over this much wall time, clamped to [MIN_TRAIL_MS, TRAIL_MS] of sim time: 2 min at 1x,
+ * 150 s at 10x, the store's 5 min from 20x up. Retaining 15 min for 60x, as the prototype drew, cost
+ * 40% of the frame rate for slightly longer trails (M8, measured at zoom 6.3). Tune by eye.
+ */
+const TRAIL_WALL_MS = 15_000;
+const MIN_TRAIL_MS = 2 * 60_000;
 /** A vehicle whose drawn position hasn't changed for this long, in sim time, dims. */
 const STAND_MS = 15_000;
 /** Light adds up, so dense places glow brighter. Nothing writes depth, so light shows through terrain edges. */
@@ -86,7 +93,8 @@ export function attachVehicleLayers(
       if (now - at > STAND_MS) standing.add(id);
     }
     moved = next;
-    overlay.setProps({ layers: vehicleLayers(frame, standing, map.getZoom(), seconds(now), seconds) });
+    const trailMs = Math.min(TRAIL_MS, Math.max(MIN_TRAIL_MS, clock.speed * TRAIL_WALL_MS));
+    overlay.setProps({ layers: vehicleLayers(frame, standing, map.getZoom(), seconds(now), seconds, trailMs) });
     raf = requestAnimationFrame(tick);
   });
 
@@ -109,6 +117,7 @@ function vehicleLayers(
   zoom: number,
   nowSeconds: number,
   seconds: (epochMs: number) => number,
+  trailMs: number,
 ): Layer[] {
   const models = modelOpacity(zoom);
   const near = Math.min(1, Math.max(0, (zoom - 4.7) / (11.6 - 4.7)));
@@ -127,7 +136,7 @@ function vehicleLayers(
       getTimestamps: (d) => d.times.map(seconds),
       getColor: (d) => GLOW[d.mode],
       currentTime: nowSeconds,
-      trailLength: TRAIL_MS / 1000,
+      trailLength: trailMs / 1000,
       fadeTrail: true,
       widthMinPixels: dot * 0.75,
       opacity: 0.8,

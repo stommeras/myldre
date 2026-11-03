@@ -36,7 +36,7 @@ Decisions:
 Tasks:
 
 - [ ] Recorder, then a weekday morning rush recording (07:00 to 09:00). Evening recordings are fine for development.
-- [ ] Sim clock and replay source with speed toggles (1x, 10x, 30x, 60x, 120x), looping over the recording
+- [x] Sim clock and replay source with speed toggles (1x, 10x, 30x, 60x, 120x), looping over the recording
 - [x] Opening view on all of Norway, blue-black base, additive glowing dots and fading trails per mode
 - [ ] Shapes at Norway scale: about 1000 journeys on load. Measure fetch count and time. If too slow, fetch rail and in-view vehicles first.
 - [ ] Rail stays on its shape when zoomed out. The 40 m off-shape fallback was tuned on Bergen buses, so check it on trains.
