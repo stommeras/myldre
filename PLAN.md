@@ -71,6 +71,7 @@ Build order: M1, then M5, then M2 to M4. Motion was the go/no-go question. Berge
 
 ## For later
 
+- Dead-reckon a frozen vehicle along its shape into a tunnel, instead of standing at the mouth for freezes over about 33 s (30% of Bergen's exact-repeat freezes). See docs/vehicle-store.md, sign-off.
 - Realistic visuals
 - Kartverket elevation data for sharper fjords
 - Self-hosted Protomaps Norway extract

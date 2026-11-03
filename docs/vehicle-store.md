@@ -452,14 +452,16 @@ Two reviewers, Opus and Sonnet, attacked this design adversarially, and both fou
 - **A 2-minute lag limit**, as review first proposed. The longest freeze in the Bergen capture left 145 s of lag, and 4 freezes passed 2 minutes. In the replay each of those jumped, up to 3.7 km. Rejected for 3 minutes, which made none jump.
 - **A longer delay to cover freezes.** Freezes ran up to 3 minutes, which would put every vehicle 3 minutes behind. PLAN chose the speed cap.
 
-## Open questions and risks
+## Decided at sign-off (2026-11-03)
 
-- Are the speed caps right? Bus 25, coach 30, ferry 20, train 70, other 25 m/s are guesses that only need to exceed real top speeds. A replay with shapes should report the 99th percentile segment speed by mode.
-- Should a long freeze dead-reckon along the shape into the tunnel instead of standing at the mouth? It is the only fix for parking at the mouth, which happened in 30% of the 190 exact-repeat freezes in the Bergen capture, including all 19 that ended 1 km or more away. It needs a rule for a fix that lands behind the guess, and it would creep forward at a stop where an operator reports identical coordinates while dwelling.
-- M4's relay snapshot arrives as one multi-report first batch, so every vehicle's history would draw straight. Should the relay send shapes ahead of the snapshot, or should the store re-plan the unplayed segments of a run when its shape lands?
-- The schedule compares `Date.now()` with `recordedAt` and assumes one clock. Reports land p50 2 s and p99 27 s after they were recorded, which leaves 8 s of the 35 s delay as margin. A device clock more than about 8 s fast makes the slowest 1% of reports land after the model needs them and brings their waits back. A slow clock delays every vehicle and the silence rule by the same amount. Should the store estimate the offset from the feed?
-- Do shape vertices make trail rebuilds too slow for all of Norway in M2? Thinning trail points behind `now` to the corners is the likely fix. The thinning must keep hold points and corners, or the trail head leaves the model, as two of the spec's tests show.
-- How hard will the start-up burst of lookups hit Journey Planner (about 430 journeys in Bergen, about 1200 in Norway)? `shapes.ts` batches by tick, and it may need a cap on aliases per POST.
+The open questions from the interrogate round were settled with the recommended option each time.
+
+- **Speed caps.** Keep bus 25, coach 30, ferry 20, train 70 and other 25 m/s for now. The M5 implementation replays the Bergen capture with shapes and reports the 99th percentile segment speed by mode. Each cap is then set just above its mode's p99.
+- **Long freezes stand at the tunnel mouth.** M5 does not dead-reckon into tunnels. It would need a rule for a fix that lands behind the guess, and it would creep at stops that repeat their coordinates. It goes to PLAN.md's "For later", to revisit after watching M5 on live data.
+- **M4 relay history draws straight.** The relay sending shapes ahead of the snapshot can't fix this on its own, because the store asks for a shape only after the ingest that names it. M4 instead has the store re-plan a run's segments when that run's shape lands. That bends "stamped once" for one case, and M4 designs the exact rule.
+- **Clock skew.** M5 does not estimate a clock offset. The M5 live check logs the median and p99 of `now − recordedAt` at ingest. The store gets an offset estimate only if the median is more than 5 s from the spike's 2 s.
+- **Trail cost with shape vertices.** This is a gate for M2. Before dropping the bounding box, M2 measures trail rebuild time for all of Norway with shapes. If rebuilds pass 2 ms at p95, it thins trail points behind `now` and keeps hold points and corners. The 2 ms is a starting threshold, not a measured one.
+- **Journey Planner start-up burst.** `shapes.ts` sends at most 50 aliases per POST and one POST at a time. These are starting values. Tune them if Entur answers 429 or a batch takes over 2 s.
 
 ## Settled earlier and still true
 
