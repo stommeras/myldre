@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { journeyShapes } from "./shapes";
-import type { JourneyId } from "./types";
+import type { JourneyId, ShapeLookup } from "./types";
 
 const id = (n: number | string) => `SKY:ServiceJourney:${n}` as JourneyId;
 const GOOGLE = "_p~iF~ps|U_ulLnnqC_mqNvxq`@";
@@ -12,7 +11,12 @@ const aliases = (call: unknown[]) =>
 const echo = (call: unknown[]) => reply(Object.fromEntries(aliases(call).map((a) => [a, node(GOOGLE)])));
 
 const fetchMock = vi.fn();
-beforeEach(() => vi.stubGlobal("fetch", fetchMock));
+let journeyShapes: ShapeLookup;
+beforeEach(async () => {
+  vi.stubGlobal("fetch", fetchMock);
+  vi.resetModules();
+  ({ journeyShapes } = await import("./shapes"));
+});
 afterEach(() => {
   fetchMock.mockReset();
   vi.unstubAllGlobals();
@@ -84,4 +88,14 @@ it("aborts a hung POST after 10 s", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(1);
   expect((await p).map((x) => x.status)).toEqual(["rejected", "rejected"]);
+});
+
+it("shares one answer between repeated asks for a journey, and retries after a rejection", async () => {
+  fetchMock.mockResolvedValueOnce(new Response("nope", { status: 500 }));
+  await expect(journeyShapes(id(1))).rejects.toThrow();
+  fetchMock.mockImplementation(async (...c) => echo(c));
+  const [a, b] = await Promise.all([journeyShapes(id(1)), journeyShapes(id(1))]);
+  expect(await journeyShapes(id(1))).toBe(a);
+  expect(b).toBe(a);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 });
