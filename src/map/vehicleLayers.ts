@@ -31,8 +31,14 @@ const HALO_SCALE = 4;
  */
 const TRAIL_WALL_MS = 15_000;
 const MIN_TRAIL_MS = 2 * 60_000;
-/** A vehicle whose drawn position hasn't changed for this long, in sim time, dims. */
-const STAND_MS = 15_000;
+/**
+ * A vehicle whose drawn position hasn't changed for this long, in sim time, dims. Reports come every
+ * 10 to 30 s and a tween often waits about 15 s at its last fix, so shorter thresholds dim moving
+ * vehicles between reports. Tune by eye.
+ */
+const STAND_MS = 60_000;
+/** Dimming eases over wall time, so a stop or start never flashes, at any replay speed. */
+const DIM_TAU_MS = 400;
 /** Light adds up, so dense places glow brighter. Nothing writes depth, so light shows through terrain edges. */
 const ADDITIVE = {
   blend: true,
@@ -75,26 +81,31 @@ export function attachVehicleLayers(
   };
   map.on("sourcedata", onSourceData);
 
-  // Where each vehicle was last seen moving. Rebuilt every frame, so forgotten vehicles drop out.
-  let moved = new Map<VehicleId, { lng: number; lat: number; at: number }>();
+  // Where each vehicle was last seen moving, and how dim it is drawn, 0 to 1. Rebuilt every frame,
+  // so forgotten vehicles drop out.
+  let moved = new Map<VehicleId, Moved>();
+  let wallAt = performance.now();
 
   // ponytail: always-on rAF. Something is always tweening with ~1200 vehicles. Pause on
   // document.hidden if battery matters.
   // M6 follow camera: take a `followed: () => VehicleId | null` here and jumpTo its pose from `f`.
   let raf = requestAnimationFrame(function tick() {
     const now = clock.now();
+    const wall = performance.now();
+    const ease = 1 - Math.exp(-(wall - wallAt) / DIM_TAU_MS);
+    wallAt = wall;
     const frame = store.frame(now);
-    const next = new Map<VehicleId, { lng: number; lat: number; at: number }>();
-    const standing = new Set<VehicleId>();
+    const next = new Map<VehicleId, Moved>();
     for (const { id, position: [lng, lat] } of frame.poses) {
       const last = moved.get(id);
       const at = last && last.lng === lng && last.lat === lat ? last.at : now;
-      next.set(id, { lng, lat, at });
-      if (now - at > STAND_MS) standing.add(id);
+      const target = now - at > STAND_MS ? 1 : 0;
+      const dim = last ? last.dim + (target - last.dim) * ease : target;
+      next.set(id, { lng, lat, at, dim });
     }
     moved = next;
     const trailMs = Math.min(TRAIL_MS, Math.max(MIN_TRAIL_MS, clock.speed * TRAIL_WALL_MS));
-    overlay.setProps({ layers: vehicleLayers(frame, standing, map.getZoom(), seconds(now), seconds, trailMs) });
+    overlay.setProps({ layers: vehicleLayers(frame, (id) => moved.get(id)?.dim ?? 0, map.getZoom(), seconds(now), seconds, trailMs) });
     raf = requestAnimationFrame(tick);
   });
 
@@ -113,7 +124,7 @@ export function attachVehicleLayers(
  */
 function vehicleLayers(
   { poses, trails }: Frame,
-  standing: ReadonlySet<VehicleId>,
+  dimOf: (id: VehicleId) => number,
   zoom: number,
   nowSeconds: number,
   seconds: (epochMs: number) => number,
@@ -148,7 +159,7 @@ function vehicleLayers(
       visible: models < 1,
       opacity: 1 - models,
       getPosition: (d) => d.position,
-      getFillColor: (d) => tint(d.mode, standing.has(d.id) ? 15 : 60),
+      getFillColor: (d) => tint(d.mode, mix(60, 15, dimOf(d.id))),
       radiusUnits: "pixels",
       getRadius: dot * HALO_SCALE,
       billboard: true,
@@ -160,7 +171,7 @@ function vehicleLayers(
       visible: models < 1,
       opacity: 1 - models,
       getPosition: (d) => d.position,
-      getFillColor: (d) => (standing.has(d.id) ? tint(d.mode, 90) : [255, 245, 225, 255]),
+      getFillColor: (d) => core(d.mode, dimOf(d.id)),
       radiusUnits: "pixels",
       getRadius: dot,
       billboard: true,
@@ -184,9 +195,28 @@ function vehicleLayers(
   ];
 }
 
+interface Moved {
+  lng: number;
+  lat: number;
+  at: number;
+  dim: number;
+}
+
+const MOVING_CORE = [255, 245, 225, 255] as const;
+
 function tint(mode: Mode, alpha: number): Color {
   const [r, g, b] = GLOW[mode];
   return [r, g, b, alpha];
+}
+
+/** A moving core is near white, a standing one its mode's tint at alpha 90. */
+function core(mode: Mode, dim: number): Color {
+  const [r, g, b] = GLOW[mode];
+  return [mix(MOVING_CORE[0], r, dim), mix(MOVING_CORE[1], g, dim), mix(MOVING_CORE[2], b, dim), mix(255, 90, dim)];
+}
+
+function mix(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }
 
 /** 0 at DOTS_ZOOM and below, 1 at MODELS_ZOOM and above, smoothstep between. */
