@@ -3,6 +3,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { createMap } from "./map/createMap";
 import { attachVehicleLayers } from "./map/vehicleLayers";
 import { InfoCard } from "./ui/InfoCard";
+import { journeyShapes } from "./vehicles/shapes";
 import { vehicleSource } from "./vehicles/source";
 import { VehicleStore } from "./vehicles/store";
 import type { VehicleId } from "./vehicles/types";
@@ -17,7 +18,7 @@ export function App() {
   let map: MapLibreMap | undefined;
   const store = new VehicleStore({
     elevationAt: (p) => map?.queryTerrainElevation([p[0], p[1]]) ?? null,
-    shapeOf: () => Promise.resolve(null),
+    shapeOf: journeyShapes,
   });
 
   const [version, setVersion] = createSignal(store.version);
