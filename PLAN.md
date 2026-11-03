@@ -38,8 +38,10 @@ Tasks:
 - [ ] Recorder, then a weekday morning rush recording (07:00 to 09:00). Evening recordings are fine for development.
 - [x] Sim clock and replay source with speed toggles (1x, 10x, 30x, 60x, 120x), looping over the recording
 - [x] Opening view on all of Norway, blue-black base, additive glowing dots and fading trails per mode
-- [ ] Shapes at Norway scale: about 1000 journeys on load. Measure fetch count and time. If too slow, fetch rail and in-view vehicles first.
-- [ ] Rail stays on its shape when zoomed out. The 40 m off-shape fallback was tuned on Bergen buses, so check it on trains.
+- [x] Shapes at Norway scale: about 1000 journeys on load. Measure fetch count and time. If too slow, fetch rail and in-view vehicles first.
+  - Measured on the evening recording at 1x: about 1420 journeys asked within 1 s of load, 54 POSTs, 50% answered by 3.2 s and 90% by 4.6 s. No ordering needed. A loop of the 30-minute recording names about 2290 journeys. `journeyShapes` caches one answer per journey, so a later loop and the store's sim-time retries cost no requests.
+- [x] Rail stays on its shape when zoomed out. The 40 m off-shape fallback was tuned on Bergen buses, so check it on trains.
+  - Raw train reports within 40 m of their journey's shape: Go-Ahead 98%, SJ 96%, Vy 89.5% (5% at 40 to 100 m, 5% over 200 m). Flytoget's `pointsOnLink` runs stop to stop, 9 vertices over 82 km, so 71% of its reports fall back to straight lines. That's the data, not the threshold. The 40 m fallback stays.
 
 ### M1: Bergen moving, night mood (one weekend)
 
