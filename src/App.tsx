@@ -1,6 +1,6 @@
 import { createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { createMap } from "./map/createMap";
+import { BERGEN, createMap, NORWAY } from "./map/createMap";
 import { attachVehicleLayers } from "./map/vehicleLayers";
 import { InfoCard } from "./ui/InfoCard";
 import { journeyShapes } from "./vehicles/shapes";
@@ -34,7 +34,7 @@ export function App() {
   });
 
   onMount(() => {
-    map = createMap(container);
+    map = createMap(container, live ? BERGEN : NORWAY);
     const m = map;
     let detach: (() => void) | undefined;
     let stop: (() => void) | undefined;

@@ -21,6 +21,22 @@ const GLOW: Record<Mode, Color> = {
 /** Below DOTS_ZOOM only dots, above MODELS_ZOOM only models, crossfade between. Tune by eye. */
 const DOTS_ZOOM = 9;
 const MODELS_ZOOM = 11;
+/** Dot core radius in pixels at all of Norway (zoom 4.7) and at city zoom (11.6), from the swarm prototype. */
+const DOT_PX = { far: 1.6, near: 3 };
+const HALO_SCALE = 4;
+/** A vehicle whose drawn position hasn't changed for this long, in sim time, dims. */
+const STAND_MS = 15_000;
+/** Light adds up, so dense places glow brighter. Nothing writes depth, so light shows through terrain edges. */
+const ADDITIVE = {
+  blend: true,
+  blendColorOperation: "add",
+  blendColorSrcFactor: "src-alpha",
+  blendColorDstFactor: "one",
+  blendAlphaSrcFactor: "one",
+  blendAlphaDstFactor: "one",
+  depthCompare: "always",
+  depthWriteEnabled: false,
+} as const;
 
 /**
  * Draws the store's vehicles on the map and keeps them moving. Everything deck.gl lives here.
@@ -52,12 +68,25 @@ export function attachVehicleLayers(
   };
   map.on("sourcedata", onSourceData);
 
+  // Where each vehicle was last seen moving. Rebuilt every frame, so forgotten vehicles drop out.
+  let moved = new Map<VehicleId, { lng: number; lat: number; at: number }>();
+
   // ponytail: always-on rAF. Something is always tweening with ~1200 vehicles. Pause on
   // document.hidden if battery matters.
   // M6 follow camera: take a `followed: () => VehicleId | null` here and jumpTo its pose from `f`.
   let raf = requestAnimationFrame(function tick() {
     const now = clock.now();
-    overlay.setProps({ layers: vehicleLayers(store.frame(now), map.getZoom(), seconds(now), seconds) });
+    const frame = store.frame(now);
+    const next = new Map<VehicleId, { lng: number; lat: number; at: number }>();
+    const standing = new Set<VehicleId>();
+    for (const { id, position: [lng, lat] } of frame.poses) {
+      const last = moved.get(id);
+      const at = last && last.lng === lng && last.lat === lat ? last.at : now;
+      next.set(id, { lng, lat, at });
+      if (now - at > STAND_MS) standing.add(id);
+    }
+    moved = next;
+    overlay.setProps({ layers: vehicleLayers(frame, standing, map.getZoom(), seconds(now), seconds) });
     raf = requestAnimationFrame(tick);
   });
 
@@ -70,12 +99,20 @@ export function attachVehicleLayers(
 
 /**
  * One frame's layers. New layer instances each frame with stable ids, the deck.gl way.
- * `poses` is a new array every frame, so position and orientation are recomputed for every
+ * `poses` is a new array every frame, so position, color and orientation are recomputed for every
  * instance. `trails` keeps its reference until a trail changes, so between changes the trail
  * layer only updates its `currentTime` uniform.
  */
-function vehicleLayers({ poses, trails }: Frame, zoom: number, nowSeconds: number, seconds: (epochMs: number) => number): Layer[] {
+function vehicleLayers(
+  { poses, trails }: Frame,
+  standing: ReadonlySet<VehicleId>,
+  zoom: number,
+  nowSeconds: number,
+  seconds: (epochMs: number) => number,
+): Layer[] {
   const models = modelOpacity(zoom);
+  const near = Math.min(1, Math.max(0, (zoom - 4.7) / (11.6 - 4.7)));
+  const dot = DOT_PX.far + (DOT_PX.near - DOT_PX.far) * near;
   // No beforeId: vehicles draw above the basemap labels (SPIKES.md, deck.gl#10700).
   // M3: one ScenegraphLayer per model, from a Record<Mode, url>, each fed poses filtered by mode.
   return [
@@ -92,7 +129,21 @@ function vehicleLayers({ poses, trails }: Frame, zoom: number, nowSeconds: numbe
       currentTime: nowSeconds,
       trailLength: TRAIL_MS / 1000,
       fadeTrail: true,
-      widthMinPixels: 2,
+      widthMinPixels: dot * 0.75,
+      opacity: 0.8,
+      parameters: ADDITIVE,
+    }),
+    new ScatterplotLayer<VehiclePose>({
+      id: "halo",
+      data: poses,
+      visible: models < 1,
+      opacity: 1 - models,
+      getPosition: (d) => d.position,
+      getFillColor: (d) => tint(d.mode, standing.has(d.id) ? 15 : 60),
+      radiusUnits: "pixels",
+      getRadius: dot * HALO_SCALE,
+      billboard: true,
+      parameters: ADDITIVE,
     }),
     new ScatterplotLayer<VehiclePose>({
       id: "dots",
@@ -100,11 +151,12 @@ function vehicleLayers({ poses, trails }: Frame, zoom: number, nowSeconds: numbe
       visible: models < 1,
       opacity: 1 - models,
       getPosition: (d) => d.position,
-      getFillColor: (d) => GLOW[d.mode],
+      getFillColor: (d) => (standing.has(d.id) ? tint(d.mode, 90) : [255, 245, 225, 255]),
       radiusUnits: "pixels",
-      getRadius: 3,
+      getRadius: dot,
       billboard: true,
       pickable: true,
+      parameters: ADDITIVE,
     }),
     new ScenegraphLayer<VehiclePose>({
       id: "models",
@@ -121,6 +173,11 @@ function vehicleLayers({ poses, trails }: Frame, zoom: number, nowSeconds: numbe
       pickable: true,
     }),
   ];
+}
+
+function tint(mode: Mode, alpha: number): Color {
+  const [r, g, b] = GLOW[mode];
+  return [r, g, b, alpha];
 }
 
 /** 0 at DOTS_ZOOM and below, 1 at MODELS_ZOOM and above, smoothstep between. */
