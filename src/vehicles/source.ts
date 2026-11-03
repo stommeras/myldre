@@ -18,7 +18,7 @@ const BBOX: { minLat: number; minLon: number; maxLat: number; maxLon: number } |
 };
 
 /** The spike's query, trimmed to what we parse, plus `destinationName` (in the live schema). */
-const QUERY = /* GraphQL */ `
+export const QUERY = /* GraphQL */ `
   subscription Vehicles($bbox: BoundingBox) {
     vehicles(boundingBox: $bbox) {
       vehicleId mode vehicleStatus lastUpdated bearing delay destinationName
