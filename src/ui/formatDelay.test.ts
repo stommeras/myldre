@@ -9,6 +9,9 @@ describe("formatDelay", () => {
     [-60, "-1 min"],
     [150, "+3 min"],
     [89, "+1 min"],
+    [-90, "-2 min"],
+    [90, "+2 min"],
+    [-150, "-3 min"],
     [null, "ukjent forsinkelse"],
   ])("%s -> %s", (seconds, expected) => {
     expect(formatDelay(seconds)).toBe(expected);
