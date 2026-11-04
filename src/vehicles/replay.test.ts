@@ -87,3 +87,34 @@ it("rejects a recording with no vehicle reports", async () => {
   vi.stubGlobal("fetch", async () => new Response("\n"));
   await expect(loadRecording("/empty.ndjson")).rejects.toThrow("no vehicle reports");
 });
+
+const wire = (id: string, dest: string) => ({
+  vehicleId: id, codespace: { codespaceId: "SKY" }, lastUpdated: "2026-11-04T07:00:00Z",
+  location: { latitude: 60.39, longitude: 5.32 }, line: { publicCode: "3" }, destinationName: dest,
+});
+const LINES_PAST_ONE_CHUNK = 3000;
+const ndjson = Array.from({ length: LINES_PAST_ONE_CHUNK }, (_, i) => [LINES_PAST_ONE_CHUNK - i, wire(`v${LINES_PAST_ONE_CHUNK - i}`, i % 2 ? "Åsane" : "Bønes")])
+  .map((l) => JSON.stringify(l)).join("\n");
+const gzip = async (text: string) =>
+  new Uint8Array(await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer());
+
+it.each([["plain", false], ["gzipped", true]])("loads a %s recording larger than one stream chunk", async (_, gz) => {
+  const bytes = gz ? await gzip(ndjson) : new TextEncoder().encode(ndjson);
+  vi.stubGlobal("fetch", async () => new Response(bytes));
+  const r = await loadRecording("/r.ndjson.gz");
+  expect(r.entries.map((e) => e.arrivalMs)).toEqual(Array.from({ length: LINES_PAST_ONE_CHUNK }, (_, i) => i + 1));
+  expect(r.entries.map((e) => e.report.id)).toEqual(Array.from({ length: LINES_PAST_ONE_CHUNK }, (_, i) => `SKY:v${i + 1}`));
+  expect(r.entries[0].report.journey?.destination).toBe("Åsane");
+  expect([r.startMs, r.endMs]).toEqual([1, LINES_PAST_ONE_CHUNK]);
+});
+
+it("rejects a truncated gzip", async () => {
+  const gz = await gzip(ndjson);
+  vi.stubGlobal("fetch", async () => new Response(gz.slice(0, -4)));
+  await expect(loadRecording("/r.ndjson.gz")).rejects.toThrow(TypeError);
+});
+
+it("rejects a malformed JSON line", async () => {
+  vi.stubGlobal("fetch", async () => new Response(`${JSON.stringify([1, wire("a", "Bønes")])}\n{oops\n`));
+  await expect(loadRecording("/r.ndjson")).rejects.toThrow(SyntaxError);
+});

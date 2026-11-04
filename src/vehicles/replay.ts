@@ -13,16 +13,31 @@ export interface Recording {
 export async function loadRecording(url: string): Promise<Recording> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url}: ${res.status}`);
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  const gzipped = bytes[0] === 0x1f && bytes[1] === 0x8b;
-  const body = gzipped ? new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")) : new Blob([bytes]).stream();
-  const text = await new Response(body).text();
+  const blob = await res.blob();
+  const magic = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+  const gzipped = magic[0] === 0x1f && magic[1] === 0x8b;
+  const bytes = gzipped ? blob.stream().pipeThrough(new DecompressionStream("gzip")) : blob.stream();
+  const reader = bytes.pipeThrough(new TextDecoderStream()).getReader();
   const entries: Recording["entries"] = [];
-  for (const line of text.split("\n")) {
-    if (!line) continue;
+  const parseLine = (line: string) => {
+    if (!line) return;
     const [arrivalMs, wire] = JSON.parse(line) as [number, unknown];
-    if (typeof wire !== "object" || wire === null) continue;
+    if (typeof wire !== "object" || wire === null) return;
     for (const report of parseVehicle(wire as WireVehicle)) entries.push({ arrivalMs, report });
+  };
+  try {
+    let rest = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const lines = (rest + value).split("\n");
+      rest = lines.pop()!;
+      lines.forEach(parseLine);
+    }
+    parseLine(rest);
+  } catch (err) {
+    await reader.cancel().catch(() => {});
+    throw err;
   }
   if (entries.length === 0) throw new Error(`${url}: no vehicle reports`);
   entries.sort((a, b) => a.arrivalMs - b.arrivalMs);
