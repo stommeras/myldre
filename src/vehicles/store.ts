@@ -108,7 +108,7 @@ type ShapeEntry =
  * Every vehicle the app knows about, and everything derived from them: visibility, pose, trail, info.
  * Plain mutable state outside Solid. Each vehicle has one timed path that is both its trail and its
  * motion, stamped once at ingest, so `frame` and `info` only read it (docs/vehicle-store.md).
- * All times are epoch ms on `Date.now()`'s clock.
+ * All times are epoch ms on the app's `Clock`.
  */
 export class VehicleStore {
   #vehicles = new Map<VehicleId, VehicleState>();

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { LOOP_GAP_MS, ReplayClock, replaySource, type Recording } from "./replay";
+import { loadRecording, LOOP_GAP_MS, ReplayClock, replaySource, type Recording } from "./replay";
 import type { VehicleId, VehicleReport } from "./types";
 
 const report = (id: string, recordedAt: number) =>
@@ -69,4 +69,21 @@ it("stop cancels the loop", () => {
   stop();
   advance(10_000);
   expect(batches).toHaveLength(0);
+});
+
+it("holds sim time at speed 0, as for a hidden tab, and emits nothing missed on resume", () => {
+  const { clock, batches, advance } = setup(1);
+  advance(0);
+  clock.setSpeed(0);
+  const paused = clock.now();
+  advance(60_000);
+  expect(clock.now()).toBe(paused);
+  clock.setSpeed(1);
+  advance(5_000);
+  expect(batches.map((b) => b.map((r) => r.id))).toEqual([["a"], ["b"]]);
+});
+
+it("rejects a recording with no vehicle reports", async () => {
+  vi.stubGlobal("fetch", async () => new Response("\n"));
+  await expect(loadRecording("/empty.ndjson")).rejects.toThrow("no vehicle reports");
 });

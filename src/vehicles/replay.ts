@@ -24,6 +24,7 @@ export async function loadRecording(url: string): Promise<Recording> {
     if (typeof wire !== "object" || wire === null) continue;
     for (const report of parseVehicle(wire as WireVehicle)) entries.push({ arrivalMs, report });
   }
+  if (entries.length === 0) throw new Error(`${url}: no vehicle reports`);
   entries.sort((a, b) => a.arrivalMs - b.arrivalMs);
   return { startMs: entries[0].arrivalMs, endMs: entries[entries.length - 1].arrivalMs, entries };
 }

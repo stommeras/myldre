@@ -19,7 +19,7 @@ Review added three rules that PLAN.md doesn't state. A fix that would leave the 
 Constraints carried over from M1, still true:
 
 - Upsert by `vehicleId` (codespace-prefixed, `SKY:101`). Reports may arrive in any order, repeat, or be history. The store absorbs all of it.
-- A vehicle is stale when its newest `lastUpdated` is over 2 minutes old or its journey is COMPLETED or CANCELLED. A null status counts as alive.
+- A vehicle is stale when its newest `lastUpdated` is over 3 minutes old or its journey is COMPLETED or CANCELLED. A null status counts as alive.
 - `speed` is almost always null. Speed is derived from positions.
 - A trail belongs to the vehicle, survives journey changes and long silences, and fades out on its own after the model disappears.
 - z comes from `map.queryTerrainElevation()` and sharpens as DEM tiles load, so the store re-samples it.
@@ -29,7 +29,7 @@ Two things make the shape non-obvious. Shapes arrive asynchronously, from the ne
 
 ## Usage (caller's view)
 
-The app still uses one source, one store and one attach function. M5 adds one injected function, the shape lookup, beside the elevation function the store already takes.
+The app still uses one source, one store and one attach function. M5 adds one injected function, the shape lookup, beside the elevation function the store already takes. M8 adds one `Clock` that every caller reads for "now": `Date.now()` at 1x behind `?live`, or a `ReplayClock` that plays a recording sped up. The store never reads a clock itself.
 
 ```ts
 // App.tsx, the composition root.
@@ -41,13 +41,13 @@ const store = new VehicleStore({
 });
 const [version, setVersion] = createSignal(store.version);
 const [selected, setSelected] = createSignal<VehicleId | null>(null);
-const info = createMemo(() => (version(), selected() ? store.info(selected()!, Date.now()) : null));
+const info = createMemo(() => (version(), selected() ? store.info(selected()!, clock.now()) : null));
 
 onMount(() => {
-  map = createMap(container);
-  const detach = attachVehicleLayers(map, store, setSelected);
-  const stop = vehicleSource((reports) => {
-    store.ingest(reports, Date.now());
+  map = createMap(container, live ? BERGEN : NORWAY);
+  const detach = attachVehicleLayers(map, store, clock, setSelected);
+  const stop = source((reports) => {
+    store.ingest(reports, clock.now());
     setVersion(store.version);
   });
   onCleanup(() => { stop(); detach(); map?.remove(); });
@@ -55,8 +55,8 @@ onMount(() => {
 ```
 
 ```ts
-// map/vehicleLayers.ts is unchanged. Every animation frame:
-const now = Date.now();
+// map/vehicleLayers.ts. Every animation frame:
+const now = clock.now();
 overlay.setProps({ layers: vehicleLayers(store.frame(now), map.getZoom(), now) });
 // TripsLayer keeps currentTime = now and trailLength = TRAIL_MS.
 ```
@@ -238,7 +238,7 @@ Access patterns traced through it:
 
 ### Playback schedule
 
-Every time is epoch ms on `Date.now()`'s clock. A run is a stretch of a vehicle's life that the model plays without a break. It starts with the first live report of a new vehicle, the first live report that reaches a hidden one, or a fix whose lag would pass 3 minutes.
+Every time is epoch ms on the app's `Clock`, which is `Date.now()` when live and recording time in replay. A run is a stretch of a vehicle's life that the model plays without a break. It starts with the first live report of a new vehicle, the first live report that reaches a hidden one, or a fix whose lag would pass 3 minutes.
 
 The first report `r0` of a run becomes a point at
 

@@ -3,7 +3,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { BERGEN, createMap, NORWAY } from "./map/createMap";
 import { attachVehicleLayers } from "./map/vehicleLayers";
 import { InfoCard } from "./ui/InfoCard";
-import { SpeedBar } from "./ui/SpeedBar";
+import { SPEEDS, SpeedBar } from "./ui/SpeedBar";
 import { journeyShapes } from "./vehicles/shapes";
 import { loadRecording, ReplayClock, replaySource } from "./vehicles/replay";
 import { vehicleSource } from "./vehicles/source";
@@ -29,7 +29,8 @@ export function App() {
   const [version, setVersion] = createSignal(store.version);
   const [selected, setSelected] = createSignal<VehicleId | null>(null);
   const [replay, setReplay] = createSignal<ReplayClock | null>(null);
-  const [speed, setSpeed] = createSignal(Number(params.get("speed")) || 60);
+  const asked = Number(params.get("speed"));
+  const [speed, setSpeed] = createSignal<number>(SPEEDS.find((s) => s === asked) ?? 60);
   const changeSpeed = (s: number) => {
     replay()?.setSpeed(s);
     setSpeed(s);
@@ -63,7 +64,7 @@ export function App() {
       loadRecording(`/recordings/${name}.ndjson.gz`).then(
         (recording) => {
           if (unmounted) return;
-          const replayClock = new ReplayClock(recording, speed());
+          const replayClock = new ReplayClock(recording, document.hidden ? 0 : speed());
           clock = replayClock;
           setReplay(replayClock);
           start(replaySource(recording, replayClock));
@@ -71,7 +72,11 @@ export function App() {
         (err) => console.error("recording failed to load", err),
       );
     }
+    // A hidden tab gets no frames, so a running clock would hand every report it missed to one frame.
+    const onVisibility = () => replay()?.setSpeed(document.hidden ? 0 : speed());
+    document.addEventListener("visibilitychange", onVisibility);
     onCleanup(() => {
+      document.removeEventListener("visibilitychange", onVisibility);
       unmounted = true;
       stop?.();
       detach?.();

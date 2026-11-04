@@ -37,8 +37,11 @@ const MIN_TRAIL_MS = 2 * 60_000;
  * vehicles between reports. Tune by eye.
  */
 const STAND_MS = 60_000;
-/** Dimming eases over wall time, so a stop or start never flashes, at any replay speed. */
-const DIM_TAU_MS = 400;
+/**
+ * Dimming and appearing ease over wall time, so a stop, a start or a new vehicle never flashes, at any
+ * replay speed. A replay loop restarts every vehicle at once, and this fades them back in.
+ */
+const EASE_TAU_MS = 400;
 /** Light adds up, so dense places glow brighter. Nothing writes depth, so light shows through terrain edges. */
 const ADDITIVE = {
   blend: true,
@@ -81,8 +84,8 @@ export function attachVehicleLayers(
   };
   map.on("sourcedata", onSourceData);
 
-  // Where each vehicle was last seen moving, and how dim it is drawn, 0 to 1. Rebuilt every frame,
-  // so forgotten vehicles drop out.
+  // Where each vehicle was last seen moving, how dim and how faded in it is drawn, each 0 to 1.
+  // Rebuilt every frame, so forgotten vehicles drop out.
   let moved = new Map<VehicleId, Moved>();
   let wallAt = performance.now();
 
@@ -92,7 +95,7 @@ export function attachVehicleLayers(
   let raf = requestAnimationFrame(function tick() {
     const now = clock.now();
     const wall = performance.now();
-    const ease = 1 - Math.exp(-(wall - wallAt) / DIM_TAU_MS);
+    const ease = 1 - Math.exp(-(wall - wallAt) / EASE_TAU_MS);
     wallAt = wall;
     const frame = store.frame(now);
     const next = new Map<VehicleId, Moved>();
@@ -101,11 +104,12 @@ export function attachVehicleLayers(
       const at = last && last.lng === lng && last.lat === lat ? last.at : now;
       const target = now - at > STAND_MS ? 1 : 0;
       const dim = last ? last.dim + (target - last.dim) * ease : target;
-      next.set(id, { lng, lat, at, dim });
+      const shown = last ? last.shown + (1 - last.shown) * ease : 0;
+      next.set(id, { lng, lat, at, dim, shown });
     }
     moved = next;
     const trailMs = Math.min(TRAIL_MS, Math.max(MIN_TRAIL_MS, clock.speed * TRAIL_WALL_MS));
-    overlay.setProps({ layers: vehicleLayers(frame, (id) => moved.get(id)?.dim ?? 0, map.getZoom(), seconds(now), seconds, trailMs) });
+    overlay.setProps({ layers: vehicleLayers(frame, (id) => moved.get(id) ?? HIDDEN, map.getZoom(), seconds(now), seconds, trailMs) });
     raf = requestAnimationFrame(tick);
   });
 
@@ -124,7 +128,7 @@ export function attachVehicleLayers(
  */
 function vehicleLayers(
   { poses, trails }: Frame,
-  dimOf: (id: VehicleId) => number,
+  lookOf: (id: VehicleId) => Look,
   zoom: number,
   nowSeconds: number,
   seconds: (epochMs: number) => number,
@@ -159,7 +163,10 @@ function vehicleLayers(
       visible: models < 1,
       opacity: 1 - models,
       getPosition: (d) => d.position,
-      getFillColor: (d) => tint(d.mode, mix(60, 15, dimOf(d.id))),
+      getFillColor: (d) => {
+        const { dim, shown } = lookOf(d.id);
+        return tint(d.mode, mix(60, 15, dim) * shown);
+      },
       radiusUnits: "pixels",
       getRadius: dot * HALO_SCALE,
       billboard: true,
@@ -171,7 +178,7 @@ function vehicleLayers(
       visible: models < 1,
       opacity: 1 - models,
       getPosition: (d) => d.position,
-      getFillColor: (d) => core(d.mode, dimOf(d.id)),
+      getFillColor: (d) => core(d.mode, lookOf(d.id)),
       radiusUnits: "pixels",
       getRadius: dot,
       billboard: true,
@@ -200,7 +207,11 @@ interface Moved {
   lat: number;
   at: number;
   dim: number;
+  shown: number;
 }
+
+type Look = Pick<Moved, "dim" | "shown">;
+const HIDDEN: Look = { dim: 0, shown: 0 };
 
 const MOVING_CORE = [255, 245, 225, 255] as const;
 
@@ -210,9 +221,9 @@ function tint(mode: Mode, alpha: number): Color {
 }
 
 /** A moving core is near white, a standing one its mode's tint at alpha 90. */
-function core(mode: Mode, dim: number): Color {
+function core(mode: Mode, { dim, shown }: Look): Color {
   const [r, g, b] = GLOW[mode];
-  return [mix(MOVING_CORE[0], r, dim), mix(MOVING_CORE[1], g, dim), mix(MOVING_CORE[2], b, dim), mix(255, 90, dim)];
+  return [mix(MOVING_CORE[0], r, dim), mix(MOVING_CORE[1], g, dim), mix(MOVING_CORE[2], b, dim), mix(255, 90, dim) * shown];
 }
 
 function mix(a: number, b: number, t: number): number {
