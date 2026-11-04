@@ -12,13 +12,13 @@ A 3D map of Norway with public transport vehicles moving on real terrain. Data c
 - Vehicles: deck.gl `ScenegraphLayer`, mounted via `MapLibreOverlay` from `@deck.gl/maplibre` in interleaved mode, drawn above the basemap labels. Each vehicle's z comes from `map.queryTerrainElevation()`, because `TerrainExtension` doesn't read MapLibre's terrain. Models at every zoom, crossfading to glowing dots when zoomed out. No clustering.
 - Data: one subscription to `wss://api.entur.io/realtime/v2/vehicles/subscriptions` (graphql-ws). Each message is a batch of full vehicle states, upserted by `vehicleId`. The browser sends the client name as a query param, `?ET-Client-Name=steff-myldre`, because it can't set headers on a WebSocket.
 - Motion: each vehicle has a playback clock 35 s behind real time. The clock waits at the newest report and catches up at 1.25x. Between two reports the vehicle glides along its service journey's shape at constant speed. It falls back to a straight line when a report is over 40 m off the shape or projects backwards. Text such as "now at" in the info card comes from the newest report, not the drawn position. See SPIKES.md, route-shape glide.
-- Shapes: the subscription also asks for `serviceJourney { id }`. Journey Planner v3 resolves it to its journey pattern's `pointsOnLink`, cached per pattern. The browser fetches shapes until the relay exists, and then the relay takes it over.
+- Shapes: the subscription also asks for `serviceJourney { id }`. Journey Planner v3 resolves it to its journey pattern's `pointsOnLink`, cached per pattern. The browser fetches shapes, also after M4. The relay takes it over only if Entur rate limits or shape load time become a problem.
 - Stale vehicles are hidden: `lastUpdated` older than 3 minutes, or status COMPLETED or CANCELLED. A null status counts as alive.
 - `speed` is almost always null. Speed comes from consecutive positions of the same vehicle. A null `bearing` keeps the previous bearing.
 - A trail belongs to the vehicle and fades over time. It does not reset when the vehicle starts a new journey.
 - Modes with their own model: bus, coach (tinted bus), ferry, train. Everything else uses the generic model. Metro and tram have almost no data.
-- Until the relay exists, the browser talks to Entur directly. The relay then streams all of Norway to every client, with no viewport filtering.
-- Hosting is decided at the deploy milestone.
+- Until the relay exists, the browser talks to Entur directly. The relay then keeps a rolling 24-hour buffer of all of Norway, and every client gets the same data, with no viewport filtering.
+- Hosting: the frontend goes on Vercel at `myldre.tommeras.no`, next to tommeras.no. The relay needs an always-on process, which Vercel's free plan can't run. It does not run on the Home Assistant Pi. Where it runs is decided at M4, see the options there.
 
 ## Milestones
 
@@ -67,12 +67,33 @@ Tasks:
 - [x] Train
 - [x] Bus, with coach as a tinted bus
 
-### M4: Rust relay and deploy
+### M4: Rust relay, 24-hour timeline and deploy
 
-- [ ] Axum + Tokio relay with one upstream subscription to Entur
-- [ ] Relay filters stale vehicles and sends a compact payload
-- [ ] Relay keeps about 5 minutes of trail history and sends it with the snapshot
-- [ ] Deploy the relay, and the frontend on static hosting
+The static recording becomes a rolling window of the last 24 hours. A time slider with date and time shows where the playhead is, and its right edge is live. Live is replay at 1x pinned to the newest report, so the separate `?live` path goes.
+
+Decisions (grilled 2026-11-04):
+
+- Storage: the relay writes immutable 10-minute gzipped NDJSON segment files to disk, one write per segment when it closes. It deletes segments older than 24 hours and stops writing when free disk drops below a floor (2 GB).
+- Records stay raw `[arrivalMs, wireVehicle]`, as in M8's recordings. One parser, no new format. Compact the payload only if bandwidth becomes a problem.
+- Client fetch: plain HTTP GET per segment, cacheable for a long time because segments never change. One WebSocket covers only the live edge. On connect, the relay sends the open segment it holds in memory (up to 10 minutes), then streams new records. This replaces the old "5 minutes of trail history with the snapshot".
+- Client memory: the client keeps the current segment and prefetches the next. It drops segments behind the playhead. A morning segment is about 7 MB gzipped (94 MB / 13), so the heap stays far below M8's 900 MB.
+- Scrubbing: while dragging, only the time label updates. On release, the store resets, the client fetches the segments covering [target - 5 min, target], feeds those 5 minutes in at once without animating, then plays. The warm-up length matches `TRAIL_MS`.
+- First visit: playback starts at the most recent 07:00 at 60x, with a Live button to jump to the edge. When playback reaches the live edge, it switches to 1x LIVE. No looping.
+- Gaps: when the relay or the Entur subscription drops, the slider shades the gap and playback skips it. Entur has no history API, so there is no backfill.
+
+Hosting options for the relay (decide when M4 starts):
+
+- Oracle Cloud Always Free VM: an always-on ARM Linux box with a disk at $0. It runs the relay and Caddy as designed above. Signup needs a card check, and Oracle reclaims free VMs it considers idle. A relay with a constant Entur stream should not look idle. Check the current Always Free terms before relying on it.
+- Rejected: the Home Assistant Pi (keep HA isolated from disk wear and bugs), a home machine with port forwarding (exposes the home IP and sends every visitor's segments over the home upload), Vercel functions (no 24/7 process on the free plan).
+
+Tasks:
+
+- [ ] Axum + Tokio relay with one upstream subscription to Entur, writing 10-minute segments with 24-hour retention and a disk floor
+- [ ] Relay serves segments over HTTP and the live edge over a WebSocket, starting with the open segment
+- [ ] Client loads segments around the playhead, prefetches the next, drops old ones
+- [ ] Time slider with date and time, shaded gaps, scrub on release with a 5-minute warm-up, and a Live button
+- [ ] Remove the separate `?live` path
+- [ ] Pick the relay host, deploy it, and point the frontend at it
 
 ### M5: Motion along the road (Bergen, before M2)
 
