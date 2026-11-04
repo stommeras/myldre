@@ -7,8 +7,7 @@ import type { Map as MapLibreMap, MapSourceDataEvent } from "maplibre-gl";
 import { TRAIL_MS, type Frame, type TrailPath, type VehicleStore, type VehiclePose } from "../vehicles/store";
 import type { Clock, Mode, VehicleId } from "../vehicles/types";
 
-/** A coach is a bus; its tint comes from GLOW. */
-const MODEL: Record<Mode, string> = {
+export const MODEL: Record<Mode, string> = {
   bus: "/models/bus.glb",
   coach: "/models/bus.glb",
   ferry: "/models/ferry.glb",
@@ -123,8 +122,6 @@ function vehicleLayers(
   const { far, near } = DOT_PX;
   const dot = mix(far.px, near.px, Math.min(1, Math.max(0, (zoom - far.zoom) / (near.zoom - far.zoom))));
   // No beforeId: vehicles draw above the basemap labels (SPIKES.md, deck.gl#10700).
-  const byModel = new Map<string, VehiclePose[]>(MODEL_URLS.map((url) => [url, []]));
-  for (const pose of poses) byModel.get(MODEL[pose.mode])!.push(pose);
   return [
     new TripsLayer<TrailPath>({
       id: "trails",
@@ -175,7 +172,7 @@ function vehicleLayers(
       (url) =>
         new ScenegraphLayer<VehiclePose>({
           id: `models:${url}`,
-          data: byModel.get(url),
+          data: poses.filter((d) => MODEL[d.mode] === url),
           visible: models > 0,
           opacity: models,
           scenegraph: url,

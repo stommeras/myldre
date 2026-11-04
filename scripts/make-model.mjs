@@ -1,33 +1,27 @@
-// Writes bus.glb, ferry.glb, train.glb and generic.glb to public/models/: flat-shaded low-poly
-// shapes at real size in metres, glTF Y-up, nose toward +Z, base at y=0, origin centered on length
-// and width. Run with `node scripts/make-model.mjs`.
 import { mkdirSync, writeFileSync } from "node:fs";
 
-/** Side profile [y, z] (convex) extruded across the full width. */
-function extrude(halfW, profile) {
-  const side = (x) => profile.map(([y, z]) => [x, y, z]);
+function extrude(halfW, convexProfile) {
+  const side = (x) => convexProfile.map(([y, z]) => [x, y, z]);
   const polys = [side(-halfW), side(halfW)];
-  for (let i = 0; i < profile.length; i++) {
-    const [y0, z0] = profile[i];
-    const [y1, z1] = profile[(i + 1) % profile.length];
+  for (let i = 0; i < convexProfile.length; i++) {
+    const [y0, z0] = convexProfile[i];
+    const [y1, z1] = convexProfile[(i + 1) % convexProfile.length];
     polys.push([[-halfW, y0, z0], [halfW, y0, z0], [halfW, y1, z1], [-halfW, y1, z1]]);
   }
   return polys;
 }
 
-/** Plan [x, z] (convex) lifted from y0 to y1. */
-function prism(plan, y0, y1) {
-  const ring = (y) => plan.map(([x, z]) => [x, y, z]);
+function prism(convexPlan, y0, y1) {
+  const ring = (y) => convexPlan.map(([x, z]) => [x, y, z]);
   const polys = [ring(y0), ring(y1)];
-  for (let i = 0; i < plan.length; i++) {
-    const [x0, z0] = plan[i];
-    const [x1, z1] = plan[(i + 1) % plan.length];
+  for (let i = 0; i < convexPlan.length; i++) {
+    const [x0, z0] = convexPlan[i];
+    const [x1, z1] = convexPlan[(i + 1) % convexPlan.length];
     polys.push([[x0, y0, z0], [x1, y0, z1], [x1, y1, z1], [x0, y1, z0]]);
   }
   return polys;
 }
 
-/** A side profile with a sloped windscreen, at the front or at both ends. */
 const vehicle = ({ halfW, height, halfL, belt, nose, bothEnds }) => {
   const profile = [[0, -halfL], [0, halfL], [belt, halfL], [height, halfL - nose]];
   profile.push(...(bothEnds ? [[height, -halfL + nose], [belt, -halfL]] : [[height, -halfL]]));
@@ -49,18 +43,18 @@ const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a
 const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
 const norm = (a) => a.map((v) => v / Math.hypot(...a));
 
-/** Each part is convex, so outward is away from its own centroid. The winding is fixed against that, not by hand. */
-function glb(parts) {
+function windAwayFromConvexCentroid(poly, centroid) {
+  const n = norm(cross(sub(poly[1], poly[0]), sub(poly[2], poly[0])));
+  return dot(n, sub(poly[0], centroid)) < 0 ? [[...poly].reverse(), n.map((v) => -v)] : [poly, n];
+}
+
+function glb(convexParts) {
   const pos = [], nor = [], idx = [];
-  for (const polys of parts) {
+  for (const polys of convexParts) {
     const verts = polys.flat();
     const centroid = [0, 1, 2].map((k) => verts.reduce((s, v) => s + v[k], 0) / verts.length);
-    for (let poly of polys) {
-      let n = norm(cross(sub(poly[1], poly[0]), sub(poly[2], poly[0])));
-      if (dot(n, sub(poly[0], centroid)) < 0) {
-        poly = [...poly].reverse();
-        n = n.map((v) => -v);
-      }
+    for (const face of polys) {
+      const [poly, n] = windAwayFromConvexCentroid(face, centroid);
       const base = pos.length / 3;
       for (const p of poly) pos.push(...p), nor.push(...n);
       for (let i = 1; i < poly.length - 1; i++) idx.push(base, base + i, base + i + 1);
