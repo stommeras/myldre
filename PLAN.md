@@ -1,6 +1,6 @@
 # Myldre plan
 
-A tilted 3D night map of Norway with live public transport vehicles moving on real terrain. Data comes from the Entur Vehicle Positions API. Terms are defined in [GLOSSARY.md](GLOSSARY.md). Measurements behind the data and rendering decisions are in [SPIKES.md](SPIKES.md).
+A 3D map of Norway with public transport vehicles moving on real terrain. Data comes from the Entur Vehicle Positions API. Terms are defined in [GLOSSARY.md](GLOSSARY.md). Measurements behind the data and rendering decisions are in [SPIKES.md](SPIKES.md).
 
 ## Settled decisions
 
