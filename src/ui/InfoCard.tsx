@@ -1,5 +1,6 @@
 import { Show } from "solid-js";
 import type { VehicleInfo } from "../vehicles/store";
+import { formatDelay } from "./formatDelay";
 
 /** Line, destination, delay, mode for the clicked vehicle. Hidden when `info` is null. */
 export function InfoCard(props: { info: VehicleInfo | null; onClose: () => void }) {
@@ -8,15 +9,16 @@ export function InfoCard(props: { info: VehicleInfo | null; onClose: () => void 
       {(info) => (
         <aside class="info-card">
           <button onClick={props.onClose} aria-label="Close">×</button>
-          {/* TODO: line {info().journey?.line}, destination, formatDelay(delaySeconds), mode. "No journey" when journey is null. */}
-          <p>{info().mode}</p>
+          <Show when={info().journey} fallback={<><h2>No journey</h2><p>{info().mode}</p></>}>
+            {(journey) => (
+              <>
+                <h2>{journey().destination ? `${journey().line} ${journey().destination}` : journey().line}</h2>
+                <p>{info().mode} · {formatDelay(journey().delaySeconds)}</p>
+              </>
+            )}
+          </Show>
         </aside>
       )}
     </Show>
   );
-}
-
-/** "+3 min", "on time", "-1 min". */
-export function formatDelay(seconds: number | null): string {
-  throw new Error("not implemented");
 }

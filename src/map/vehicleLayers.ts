@@ -54,6 +54,8 @@ export function attachVehicleLayers(
   const seconds = (epochMs: number) => (epochMs - t0) / 1000;
   const overlay = new MapLibreOverlay({
     interleaved: true,
+    // A dot is 1.6 px at Norway zoom. 8 px covers its glow: every click within 8 px of a dot hit, radius 4 missed at 6 px.
+    pickingRadius: 8,
     layers: [],
     onClick: (info) => onPick((info.object as VehiclePose | undefined)?.id ?? null),
   });
