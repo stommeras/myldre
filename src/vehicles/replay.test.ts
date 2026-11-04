@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { loadRecording, LOOP_GAP_MS, ReplayClock, replaySource, type Recording } from "./replay";
+import { loadRecording, LOOP_GAP_MS, RecordingMissing, ReplayClock, replaySource, type Recording } from "./replay";
 import type { VehicleId, VehicleReport } from "./types";
 
 const report = (id: string, recordedAt: number) =>
@@ -28,7 +28,10 @@ function setup(speed = 1) {
   return { clock, batches, stop, advance, setWall: (w: number) => (wall = w) };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 it("emits entries in order once their time passes, batched per frame", () => {
   const { batches, advance } = setup();
@@ -117,4 +120,49 @@ it("rejects a truncated gzip", async () => {
 it("rejects a malformed JSON line", async () => {
   vi.stubGlobal("fetch", async () => new Response(`${JSON.stringify([1, wire("a", "Bønes")])}\n{oops\n`));
   await expect(loadRecording("/r.ndjson")).rejects.toThrow(SyntaxError);
+});
+
+it("rejects with an AbortError when the signal is already aborted", async () => {
+  vi.stubGlobal("fetch", async (_: string, init: RequestInit) => {
+    init.signal?.throwIfAborted();
+    return new Response(ndjson);
+  });
+  const ac = new AbortController();
+  ac.abort();
+  await expect(loadRecording("/r.ndjson", ac.signal)).rejects.toMatchObject({ name: "AbortError" });
+});
+
+it("rejects when aborted mid-parse", async () => {
+  vi.stubGlobal("fetch", async () => new Response(await gzip(ndjson)));
+  const ac = new AbortController();
+  const parse = JSON.parse;
+  vi.spyOn(JSON, "parse").mockImplementationOnce((text: string) => (ac.abort(), parse(text)));
+  await expect(loadRecording("/r.ndjson.gz", ac.signal)).rejects.toMatchObject({ name: "AbortError" });
+});
+
+it("treats an HTML response as a missing file", async () => {
+  vi.stubGlobal("fetch", async () => new Response("<!doctype html>", { headers: { "content-type": "text/html" } }));
+  await expect(loadRecording("/r.ndjson.gz")).rejects.toThrow(RecordingMissing);
+});
+
+it("treats a 404 as a missing file", async () => {
+  vi.stubGlobal("fetch", async () => new Response("nope", { status: 404 }));
+  await expect(loadRecording("/r.ndjson.gz")).rejects.toThrow(RecordingMissing);
+});
+
+it("rejects when aborted while the last read is pending", async () => {
+  vi.stubGlobal("fetch", async () => new Response(JSON.stringify([1, wire("a", "Bønes")]) + "\n"));
+  const ac = new AbortController();
+  let sawText = false;
+  const proto = ReadableStreamDefaultReader.prototype;
+  const read = proto.read;
+  vi.spyOn(proto, "read").mockImplementation(function (this: ReadableStreamDefaultReader) {
+    const result = read.call(this);
+    void result.then((r) => {
+      if (typeof r.value === "string") sawText = true;
+      else if (r.done && sawText) ac.abort();
+    });
+    return result;
+  } as typeof read);
+  await expect(loadRecording("/r.ndjson", ac.signal)).rejects.toMatchObject({ name: "AbortError" });
 });

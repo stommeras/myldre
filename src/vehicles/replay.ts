@@ -9,10 +9,22 @@ export interface Recording {
   entries: { arrivalMs: number; report: VehicleReport }[];
 }
 
+export class RecordingMissing extends Error {}
+
+export type Playback =
+  | { kind: "loading" }
+  | { kind: "failed"; name: string; missing: boolean }
+  | { kind: "playing"; clock: ReplayClock };
+
+const YIELD_AFTER_MS = 50;
+
 /** Dev server or browser may or may not have decoded the gzip already, so sniff the magic bytes. */
-export async function loadRecording(url: string): Promise<Recording> {
-  const res = await fetch(url);
+export async function loadRecording(url: string, signal?: AbortSignal): Promise<Recording> {
+  const res = await fetch(url, { signal });
+  if (res.status === 404) throw new RecordingMissing(`${url}: not found`);
   if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  // Vite answers a missing file with index.html and a 200.
+  if (res.headers.get("content-type")?.includes("text/html")) throw new RecordingMissing(`${url}: not found`);
   const blob = await res.blob();
   const magic = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
   const gzipped = magic[0] === 0x1f && magic[1] === 0x8b;
@@ -27,13 +39,25 @@ export async function loadRecording(url: string): Promise<Recording> {
   };
   try {
     let rest = "";
+    let yieldedAt = performance.now();
     for (;;) {
+      // MessageChannel, not setTimeout: background tabs throttle timers to one per second.
+      if (performance.now() - yieldedAt > YIELD_AFTER_MS) {
+        await new Promise((r) => {
+          const { port1, port2 } = new MessageChannel();
+          port1.onmessage = r;
+          port2.postMessage(null);
+        });
+        yieldedAt = performance.now();
+      }
+      signal?.throwIfAborted();
       const { done, value } = await reader.read();
       if (done) break;
       const lines = (rest + value).split("\n");
       rest = lines.pop()!;
       lines.forEach(parseLine);
     }
+    signal?.throwIfAborted();
     parseLine(rest);
   } catch (err) {
     await reader.cancel().catch(() => {});
