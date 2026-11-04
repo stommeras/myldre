@@ -1,4 +1,4 @@
-import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { BERGEN, createMap, NORWAY } from "./map/createMap";
 import { attachVehicleLayers } from "./map/vehicleLayers";
@@ -13,7 +13,8 @@ import type { Clock, VehicleId, VehicleSource } from "./vehicles/types";
 /**
  * Composition root and the only bridge between plain state and Solid. Two signals cross it:
  * the store's `version`, mirrored after each ingest, and the picked vehicle id. The card pulls
- * `store.info()` when either changes. The store never imports Solid, and deck never sees a signal.
+ * `store.info()` when either changes, and the selection clears once its vehicle is hidden.
+ * The store never imports Solid, and deck never sees a signal.
  */
 export function App() {
   let container!: HTMLDivElement;
@@ -39,6 +40,9 @@ export function App() {
     version();
     const id = selected();
     return id ? store.info(id, clock.now()) : null;
+  });
+  createEffect(() => {
+    if (selected() && !info()) setSelected(null);
   });
 
   onMount(() => {
