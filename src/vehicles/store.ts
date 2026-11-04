@@ -11,7 +11,7 @@ export const SHAPE_RETRY_MS = 30_000;
 export const SPEED_CAP_MPS: Record<Mode, number> = { bus: 25, coach: 30, ferry: 20, train: 70, other: 25 };
 
 /** A vehicle silent this long is forgotten, trail and all. */
-const FORGET_MS = STALE_MS + TRAIL_MS;
+export const FORGET_MS = STALE_MS + TRAIL_MS;
 /** Per-frame time budget for re-sampling terrain z after tiles load. */
 const Z_BUDGET_MS = 2;
 const DELAY_MS = 35_000;

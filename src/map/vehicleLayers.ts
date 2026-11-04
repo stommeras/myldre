@@ -21,29 +21,13 @@ const GLOW: Record<Mode, Color> = {
 /** Below DOTS_ZOOM only dots, above MODELS_ZOOM only models, crossfade between. Tune by eye. */
 const DOTS_ZOOM = 9;
 const MODELS_ZOOM = 11;
-/** Dot core radius in pixels at all of Norway (zoom 4.7) and at city zoom (11.6), from the swarm prototype. */
-const DOT_PX = { far: 1.6, near: 3 };
+const DOT_PX = { far: { zoom: 4.7, px: 1.6 }, near: { zoom: 11.6, px: 3 } };
 const HALO_SCALE = 4;
-/**
- * A trail fades over this much wall time, clamped to [MIN_TRAIL_MS, TRAIL_MS] of sim time: 2 min at 1x,
- * 150 s at 10x, the store's 5 min from 20x up. Retaining 15 min for 60x, as the prototype drew, cost
- * 40% of the frame rate for slightly longer trails (M8, measured at zoom 6.3). Tune by eye.
- */
 const TRAIL_WALL_MS = 15_000;
 const MIN_TRAIL_MS = 2 * 60_000;
-/**
- * A vehicle whose drawn position hasn't changed for this long, in sim time, dims. Reports come every
- * 10 to 30 s and a tween often waits about 15 s at its last fix, so shorter thresholds dim moving
- * vehicles between reports. Tune by eye.
- */
-const STAND_MS = 60_000;
-/**
- * Dimming and appearing ease over wall time, so a stop, a start or a new vehicle never flashes, at any
- * replay speed. A replay loop restarts every vehicle at once, and this fades them back in.
- */
+const DIM_AFTER_STILL_MS = 60_000;
 const EASE_TAU_MS = 400;
-/** Light adds up, so dense places glow brighter. Nothing writes depth, so light shows through terrain edges. */
-const ADDITIVE = {
+const ADDITIVE_NO_DEPTH = {
   blend: true,
   blendColorOperation: "add",
   blendColorSrcFactor: "src-alpha",
@@ -65,8 +49,7 @@ export function attachVehicleLayers(
   clock: Clock,
   onPick: (id: VehicleId | null) => void,
 ): () => void {
-  // TripsLayer timestamps are float32 on the GPU, and epoch ms don't fit. Times go to deck as
-  // seconds since attach. This is the only place that conversion exists.
+  // TripsLayer timestamps are float32 on the GPU, and epoch ms don't fit.
   const t0 = clock.now();
   const seconds = (epochMs: number) => (epochMs - t0) / 1000;
   const overlay = new MapLibreOverlay({
@@ -84,8 +67,6 @@ export function attachVehicleLayers(
   };
   map.on("sourcedata", onSourceData);
 
-  // Where each vehicle was last seen moving, how dim and how faded in it is drawn, each 0 to 1.
-  // Rebuilt every frame, so forgotten vehicles drop out.
   let moved = new Map<VehicleId, Moved>();
   let wallAt = performance.now();
 
@@ -100,16 +81,10 @@ export function attachVehicleLayers(
     const frame = store.frame(now);
     const next = new Map<VehicleId, Moved>();
     for (const { id, position: [lng, lat] } of frame.poses) {
-      const last = moved.get(id);
-      const at = last && last.lng === lng && last.lat === lat ? last.at : now;
-      const target = now - at > STAND_MS ? 1 : 0;
-      const dim = last ? last.dim + (target - last.dim) * ease : target;
-      const shown = last ? last.shown + (1 - last.shown) * ease : 0;
-      next.set(id, { lng, lat, at, dim, shown });
+      next.set(id, easeLook(moved.get(id), lng, lat, now, ease));
     }
     moved = next;
-    const trailMs = Math.min(TRAIL_MS, Math.max(MIN_TRAIL_MS, clock.speed * TRAIL_WALL_MS));
-    overlay.setProps({ layers: vehicleLayers(frame, (id) => moved.get(id) ?? HIDDEN, map.getZoom(), seconds(now), seconds, trailMs) });
+    overlay.setProps({ layers: vehicleLayers(frame, (id) => moved.get(id) ?? HIDDEN, map.getZoom(), seconds(now), seconds, trailLengthMs(clock.speed)) });
     raf = requestAnimationFrame(tick);
   });
 
@@ -135,8 +110,8 @@ function vehicleLayers(
   trailMs: number,
 ): Layer[] {
   const models = modelOpacity(zoom);
-  const near = Math.min(1, Math.max(0, (zoom - 4.7) / (11.6 - 4.7)));
-  const dot = DOT_PX.far + (DOT_PX.near - DOT_PX.far) * near;
+  const { far, near } = DOT_PX;
+  const dot = mix(far.px, near.px, Math.min(1, Math.max(0, (zoom - far.zoom) / (near.zoom - far.zoom))));
   // No beforeId: vehicles draw above the basemap labels (SPIKES.md, deck.gl#10700).
   // M3: one ScenegraphLayer per model, from a Record<Mode, url>, each fed poses filtered by mode.
   return [
@@ -155,7 +130,7 @@ function vehicleLayers(
       fadeTrail: true,
       widthMinPixels: dot * 0.75,
       opacity: 0.8,
-      parameters: ADDITIVE,
+      parameters: ADDITIVE_NO_DEPTH,
     }),
     new ScatterplotLayer<VehiclePose>({
       id: "halo",
@@ -164,13 +139,13 @@ function vehicleLayers(
       opacity: 1 - models,
       getPosition: (d) => d.position,
       getFillColor: (d) => {
-        const { dim, shown } = lookOf(d.id);
-        return tint(d.mode, mix(60, 15, dim) * shown);
+        const { dim, fadeIn } = lookOf(d.id);
+        return tint(d.mode, mix(60, 15, dim) * fadeIn);
       },
       radiusUnits: "pixels",
       getRadius: dot * HALO_SCALE,
       billboard: true,
-      parameters: ADDITIVE,
+      parameters: ADDITIVE_NO_DEPTH,
     }),
     new ScatterplotLayer<VehiclePose>({
       id: "dots",
@@ -183,7 +158,7 @@ function vehicleLayers(
       getRadius: dot,
       billboard: true,
       pickable: true,
-      parameters: ADDITIVE,
+      parameters: ADDITIVE_NO_DEPTH,
     }),
     new ScenegraphLayer<VehiclePose>({
       id: "models",
@@ -205,13 +180,13 @@ function vehicleLayers(
 interface Moved {
   lng: number;
   lat: number;
-  at: number;
+  stillSince: number;
   dim: number;
-  shown: number;
+  fadeIn: number;
 }
 
-type Look = Pick<Moved, "dim" | "shown">;
-const HIDDEN: Look = { dim: 0, shown: 0 };
+type Look = Pick<Moved, "dim" | "fadeIn">;
+const HIDDEN: Look = { dim: 0, fadeIn: 0 };
 
 const MOVING_CORE = [255, 245, 225, 255] as const;
 
@@ -220,10 +195,20 @@ function tint(mode: Mode, alpha: number): Color {
   return [r, g, b, alpha];
 }
 
-/** A moving core is near white, a standing one its mode's tint at alpha 90. */
-function core(mode: Mode, { dim, shown }: Look): Color {
+function core(mode: Mode, { dim, fadeIn }: Look): Color {
   const [r, g, b] = GLOW[mode];
-  return [mix(MOVING_CORE[0], r, dim), mix(MOVING_CORE[1], g, dim), mix(MOVING_CORE[2], b, dim), mix(255, 90, dim) * shown];
+  return [mix(MOVING_CORE[0], r, dim), mix(MOVING_CORE[1], g, dim), mix(MOVING_CORE[2], b, dim), mix(255, 90, dim) * fadeIn];
+}
+
+function easeLook(last: Moved | undefined, lng: number, lat: number, now: number, ease: number): Moved {
+  const stillSince = last && last.lng === lng && last.lat === lat ? last.stillSince : now;
+  const dim = now - stillSince > DIM_AFTER_STILL_MS ? 1 : 0;
+  if (!last) return { lng, lat, stillSince, dim, fadeIn: 0 };
+  return { lng, lat, stillSince, dim: mix(last.dim, dim, ease), fadeIn: mix(last.fadeIn, 1, ease) };
+}
+
+function trailLengthMs(speed: number): number {
+  return Math.min(TRAIL_MS, Math.max(MIN_TRAIL_MS, speed * TRAIL_WALL_MS));
 }
 
 function mix(a: number, b: number, t: number): number {

@@ -11,14 +11,11 @@ const WATER = "#0a1624";
 const PLACES = new Set(["place_city_large", "place_city", "place_town"]);
 
 type Opening = Pick<MapOptions, "bounds" | "center" | "zoom" | "pitch" | "bearing">;
-/** All of Norway, flat, fitted to the window. About zoom 4.7 on a 1280x800 window. The replay's opening view. */
 export const NORWAY: Opening = { bounds: [[4.5, 57.9], [31.2, 71.2]] };
-/** Tilted over Bergen centre. The live view's opening, matching its bounding box. */
 export const BERGEN: Opening = { center: [5.324, 60.393], zoom: 15, pitch: 60, bearing: 20 };
 
 setWorkerUrl(workerUrl);
 
-/** OpenFreeMap dark stripped to a blue-black base: water, faint roads, city and town names. */
 function swarmLayer(l: LayerSpecification): LayerSpecification[] {
   const id = l.id;
   if (l.type === "background") return [{ ...l, paint: { "background-color": BASE } }];
@@ -69,7 +66,6 @@ function swarmStyle(_: StyleSpecification | undefined, style: StyleSpecification
   };
 }
 
-/** Full-screen blue-black map with terrain, opening at `camera`. */
 export function createMap(container: HTMLElement, camera: Opening): MapLibreMap {
   const map = new MapLibreMap({ container, ...camera, maxPitch: 85, canvasContextAttributes: { antialias: true } });
   map.setStyle(STYLE, { transformStyle: swarmStyle });

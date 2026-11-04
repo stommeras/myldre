@@ -1,5 +1,5 @@
 import { parseVehicle, type WireVehicle } from "./source";
-import { STALE_MS, TRAIL_MS } from "./store";
+import { FORGET_MS } from "./store";
 import type { Clock, VehicleReport, VehicleSource } from "./types";
 
 export interface Recording {
@@ -29,12 +29,10 @@ export async function loadRecording(url: string): Promise<Recording> {
   return { startMs: entries[0].arrivalMs, endMs: entries[entries.length - 1].arrivalMs, entries };
 }
 
-/** Each loop's sim time jumps past the store's forget window, so the previous loop's vehicles are hidden, then forgotten, and sim time stays monotonic. */
-export const LOOP_GAP_MS = STALE_MS + TRAIL_MS + 60_000;
+export const LOOP_GAP_MS = FORGET_MS + 60_000;
 
 export class ReplayClock implements Clock {
-  /** Sim time between the same recording instant in consecutive loops. */
-  readonly loopMs: number;
+  readonly loopPeriodMs: number;
   private readonly duration: number;
   private virtual = 0;
   private wallAt: number;
@@ -45,7 +43,7 @@ export class ReplayClock implements Clock {
     private readonly wallNow: () => number = () => performance.now(),
   ) {
     this.duration = Math.max(1, recording.endMs - recording.startMs);
-    this.loopMs = this.duration + LOOP_GAP_MS;
+    this.loopPeriodMs = this.duration + LOOP_GAP_MS;
     this.wallAt = wallNow();
   }
 
@@ -56,7 +54,7 @@ export class ReplayClock implements Clock {
   now(): number {
     const v = this.virtual + (this.wallNow() - this.wallAt) * this.rate;
     const k = Math.floor(v / this.duration);
-    return this.recording.startMs + (v - k * this.duration) + k * this.loopMs;
+    return this.recording.startMs + (v - k * this.duration) + k * this.loopPeriodMs;
   }
 
   setSpeed(speed: number): void {
@@ -76,7 +74,7 @@ export function replaySource(recording: Recording, clock: ReplayClock): VehicleS
       const now = clock.now();
       const due: VehicleReport[] = [];
       for (;;) {
-        const shift = k * clock.loopMs;
+        const shift = k * clock.loopPeriodMs;
         const e = entries[i];
         if (e.arrivalMs + shift > now) break;
         due.push(k === 0 ? e.report : { ...e.report, recordedAt: e.report.recordedAt + shift });

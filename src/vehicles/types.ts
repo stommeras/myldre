@@ -78,5 +78,5 @@ export type ShapeLookup = (journey: JourneyId) => Promise<readonly LngLat[] | nu
  */
 export type VehicleSource = (onReports: (reports: VehicleReport[]) => void) => () => void;
 
-/** The app's one notion of "now", epoch ms. Live is Date.now at 1x. Replay is recording time sped up. */
+/** The app's "now", epoch ms. */
 export interface Clock { now(): number; readonly speed: number }

@@ -122,20 +122,15 @@ const fetchShape: ShapeLookup = (journey) =>
     });
   });
 
-/**
- * A sped-up replay asks again before a queued answer lands, and each replay loop asks for every
- * shape anew, so a journey's answer is shared by every ask. A rejection is dropped so the next ask retries.
- * ponytail: unbounded, about one polyline per journey seen. Evict by age if a long session grows it.
- */
-const cache = new Map<JourneyId, Promise<readonly LngLat[] | null>>();
+// ponytail: unbounded, about one polyline per journey seen. Evict by age if a long session grows it.
+const shapeByJourney = new Map<JourneyId, Promise<readonly LngLat[] | null>>();
 
-/** Journey Planner is the only thing this file knows. M4 rewrites it for the relay. */
 export const journeyShapes: ShapeLookup = (journey) => {
-  let shape = cache.get(journey);
+  let shape = shapeByJourney.get(journey);
   if (!shape) {
     shape = fetchShape(journey);
-    shape.catch(() => cache.delete(journey));
-    cache.set(journey, shape);
+    shape.catch(() => shapeByJourney.delete(journey));
+    shapeByJourney.set(journey, shape);
   }
   return shape;
 };

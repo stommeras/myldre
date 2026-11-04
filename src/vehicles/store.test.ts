@@ -288,14 +288,16 @@ describe("playback clock", () => {
   it("starts a reappearing vehicle's new run no earlier than the end of its old path", async () => {
     const s = newStore();
     await receive(s, [at(0, 0, 0, null), at(10, 100, 0, null)]);
-    s.ingest([at(70, 6100, 0, null)], 72_000);
-    // leaves = 72, lag = 72 - 10 - 35 = 27, so 1.25x says 60 / 1.25 = 48 s. The cap says 6000 / 25 = 240 s,
-    // so the model reaches 6100 m at 312 s. Silent after its 70 s report, it is hidden from 250 s, mid-road.
-    expect(poseAt(s, 260_000)).toBeUndefined();
-    s.ingest([at(260, 6500, 0, null)], 262_000);
-    // The new run starts at max(312, min(262, 260 + 35)) = 312, so the old path still plays until then.
-    expectAt(s, 280_000, 100 + SPEED_CAP_MPS.bus * (280 - 72), 0); // 5300 m
-    expectAt(s, 312_000, 6500, 0);
+    const leaves = 72_000;
+    s.ingest([at(70, 6100, 0, null)], leaves);
+    const cappedArrival = leaves + ((6100 - 100) / SPEED_CAP_MPS.bus) * 1000;
+    const back = 70_000 + STALE_MS + 10_000;
+    expect(back).toBeLessThan(cappedArrival);
+    expect(poseAt(s, back)).toBeUndefined();
+    s.ingest([at(back / 1000, 6500, 0, null)], back + 2_000);
+    const stillOld = back + 20_000;
+    expectAt(s, stillOld, 100 + SPEED_CAP_MPS.bus * ((stillOld - leaves) / 1000), 0);
+    expectAt(s, cappedArrival, 6500, 0);
   });
 });
 

@@ -52,15 +52,7 @@ export function passesNear(shape: RouteShape, p: LngLat, from: number, to: numbe
   const passes: Pass[] = [];
   let best: { pass: Pass; d: number } | null = null;
   let prevHeading: number | null = null;
-  // Segments that end before the window can't be near, so start at the first that reaches it.
-  let lo = 1;
-  let hi = xs.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (cum[mid] < from - EPS_M) lo = mid + 1;
-    else hi = mid;
-  }
-  for (let i = lo; i < xs.length && cum[i - 1] <= to + EPS_M; i++) {
+  for (let i = firstSegmentReaching(cum, from); i < xs.length && cum[i - 1] <= to + EPS_M; i++) {
     const vx = xs[i] - xs[i - 1];
     const vy = ys[i] - ys[i - 1];
     const t = Math.max(0, Math.min(1, ((px - xs[i - 1]) * vx + (py - ys[i - 1]) * vy) / (vx * vx + vy * vy)));
@@ -78,6 +70,17 @@ export function passesNear(shape: RouteShape, p: LngLat, from: number, to: numbe
   }
   if (best) passes.push(best.pass);
   return passes;
+}
+
+function firstSegmentReaching(cum: readonly number[], from: number): number {
+  let lo = 1;
+  let hi = cum.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid] < from - EPS_M) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 /** The point `along` metres along the shape, clamped to its ends. */
