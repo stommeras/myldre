@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { encodeLine } from "./entur";
-import { loadRecording, LOOP_GAP_MS, RecordingMissing, ReplayClock, replaySource, type Recording } from "./replay";
+import { loadRecording, LOOP_GAP_MS, type Playback, playRecording, RecordingMissing, ReplayClock, replaySource, type Recording } from "./replay";
 import type { VehicleId, VehicleReport } from "./types";
 
 const report = (id: string, recordedAt: number) =>
@@ -152,7 +152,7 @@ it("treats a 404 as a missing file", async () => {
 });
 
 it("rejects when aborted while the last read is pending", async () => {
-  vi.stubGlobal("fetch", async () => new Response(JSON.stringify([1, wire("a", "Bønes")]) + "\n"));
+  vi.stubGlobal("fetch", async () => new Response(encodeLine(1, wire("a", "Bønes"))));
   const ac = new AbortController();
   let sawText = false;
   const proto = ReadableStreamDefaultReader.prototype;
@@ -166,4 +166,57 @@ it("rejects when aborted while the last read is pending", async () => {
     return result;
   } as typeof read);
   await expect(loadRecording("/r.ndjson", ac.signal)).rejects.toMatchObject({ name: "AbortError" });
+});
+
+it("pausing holds sim time and keeps the chosen speed, so a hidden tab resumes at it", () => {
+  const { clock, advance } = setup(10);
+  clock.setPaused(true);
+  const paused = clock.now();
+  advance(60_000);
+  clock.setSpeed(30);
+  advance(60_000);
+  expect([clock.now(), clock.speed]).toEqual([paused, 30]);
+  clock.setPaused(false);
+  advance(100);
+  expect(clock.now()).toBe(paused + 3_000);
+});
+
+const page = (hidden: boolean) => Object.assign(new EventTarget(), { hidden });
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+it("reports loading, then playing paused on a hidden page, and resumes at the chosen speed when shown", async () => {
+  vi.stubGlobal("fetch", async () => new Response(encodeLine(1, wire("a", "Bønes"))));
+  const p = page(true);
+  const seen: Playback[] = [];
+  playRecording("r", 60, (s) => seen.push(s), p);
+  await vi.waitFor(() => expect(seen.at(-1)?.kind).toBe("playing"));
+  expect(seen[0]).toEqual({ kind: "loading" });
+  const { clock } = seen.at(-1) as Extract<Playback, { kind: "playing" }>;
+  const hiddenAt = clock.now();
+  await settle();
+  expect(clock.now()).toBe(hiddenAt);
+  p.hidden = false;
+  p.dispatchEvent(new Event("visibilitychange"));
+  expect(clock.speed).toBe(60);
+  await vi.waitFor(() => expect(clock.now()).toBeGreaterThan(hiddenAt));
+});
+
+it("reports a missing recording by name", async () => {
+  vi.stubGlobal("fetch", async (url: string) => (expect(url).toBe("/recordings/gone.ndjson.gz"), new Response("", { status: 404 })));
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const seen: Playback[] = [];
+  playRecording("gone", 60, (s) => seen.push(s), page(false));
+  await vi.waitFor(() => expect(seen.at(-1)).toEqual({ kind: "failed", name: "gone", missing: true }));
+});
+
+it("reports nothing after stop and drops the page listener", async () => {
+  vi.stubGlobal("fetch", async () => new Response(encodeLine(1, wire("a", "Bønes"))));
+  const p = page(false);
+  const removed = vi.spyOn(p, "removeEventListener");
+  const seen: Playback[] = [];
+  playRecording("r", 60, (s) => seen.push(s), p)();
+  await settle();
+  await settle();
+  expect(seen).toEqual([{ kind: "loading" }]);
+  expect(removed).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
 });

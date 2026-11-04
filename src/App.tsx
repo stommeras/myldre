@@ -6,15 +6,17 @@ import { InfoCard } from "./ui/InfoCard";
 import { LoadStatus } from "./ui/LoadStatus";
 import { SPEEDS, SpeedBar } from "./ui/SpeedBar";
 import { journeyShapes } from "./vehicles/shapes";
-import { loadRecording, type Playback, RecordingMissing, ReplayClock, replaySource } from "./vehicles/replay";
+import { type Playback, playRecording } from "./vehicles/replay";
 import { vehicleSource } from "./vehicles/source";
 import { VehicleStore } from "./vehicles/store";
 import type { Clock, VehicleId, VehicleSource } from "./vehicles/types";
 
+const WALL: Clock = { now: () => Date.now(), speed: 1 };
+
 /**
- * Composition root and the only bridge between plain state and Solid. Two signals cross it:
- * the store's `version`, mirrored after each ingest, and the picked vehicle id. The card pulls
- * `store.info()` when either changes, and the selection clears once its vehicle is hidden.
+ * Composition root and the only bridge between plain state and Solid. Three signals cross it:
+ * the store's `version`, mirrored after each ingest, the picked vehicle id, and the playback state.
+ * The card pulls `store.info()` when any changes, and the selection clears once its vehicle is hidden.
  * The store never imports Solid, and deck never sees a signal.
  */
 export function App() {
@@ -22,7 +24,6 @@ export function App() {
   let map: MapLibreMap | undefined;
   const params = new URLSearchParams(location.search);
   const live = params.has("live");
-  let clock: Clock = { now: () => Date.now(), speed: 1 };
   const store = new VehicleStore({
     elevationAt: (p) => map?.queryTerrainElevation([p[0], p[1]]) ?? null,
     shapeOf: journeyShapes,
@@ -30,11 +31,12 @@ export function App() {
 
   const [version, setVersion] = createSignal(store.version);
   const [selected, setSelected] = createSignal<VehicleId | null>(null);
-  const [playback, setPlayback] = createSignal<Playback | null>(live ? null : { kind: "loading" });
+  const [playback, setPlayback] = createSignal<Playback | null>(null);
   const playing = () => {
     const p = playback();
     return p?.kind === "playing" ? p.clock : null;
   };
+  const clock = (): Clock => playing() ?? WALL;
   const asked = Number(params.get("speed"));
   const [speed, setSpeed] = createSignal<number>(SPEEDS.find((s) => s === asked) ?? 60);
   const changeSpeed = (s: number) => {
@@ -44,7 +46,7 @@ export function App() {
   const info = createMemo(() => {
     version();
     const id = selected();
-    return id ? store.info(id, clock.now()) : null;
+    return id ? store.info(id, clock().now()) : null;
   });
   createEffect(() => {
     if (selected() && !info()) setSelected(null);
@@ -55,41 +57,25 @@ export function App() {
     const m = map;
     let detach: (() => void) | undefined;
     let stop: (() => void) | undefined;
-    const loading = new AbortController();
-    // Browser checks drive the map and store from outside (docs/vehicle-store.md, Answered in M1).
-    const expose = () => import.meta.env.DEV && Object.assign(window, { map: m, store, clock });
-    const start = (source: VehicleSource) => {
+    const start = (source: VehicleSource, clock: Clock) => {
       detach = attachVehicleLayers(m, store, clock, setSelected);
-      expose();
+      // Browser checks drive the map and store from outside (docs/vehicle-store.md, Answered in M1).
+      if (import.meta.env.DEV) Object.assign(window, { map: m, store, clock });
       stop = source((reports) => {
         store.ingest(reports, clock.now());
         setVersion(store.version);
       });
     };
-    if (live) {
-      start(vehicleSource);
-    } else {
-      const name = params.get("recording") ?? "2026-11-04-morning";
-      loadRecording(`/recordings/${name}.ndjson.gz`, loading.signal).then(
-        (recording) => {
-          const replayClock = new ReplayClock(recording, document.hidden ? 0 : speed());
-          clock = replayClock;
-          setPlayback({ kind: "playing", clock: replayClock });
-          start(replaySource(recording, replayClock));
-        },
-        (err) => {
-          if (loading.signal.aborted) return;
-          console.error("recording failed to load", err);
-          setPlayback({ kind: "failed", name, missing: err instanceof RecordingMissing });
-        },
-      );
+    let stopLoad: (() => void) | undefined;
+    if (live) start(vehicleSource, WALL);
+    else {
+      stopLoad = playRecording(params.get("recording") ?? "2026-11-04-morning", speed(), (p) => {
+        setPlayback(p);
+        if (p.kind === "playing") start(p.source, p.clock);
+      });
     }
-    // A hidden tab gets no frames, so a running clock would hand every report it missed to one frame.
-    const onVisibility = () => playing()?.setSpeed(document.hidden ? 0 : speed());
-    document.addEventListener("visibilitychange", onVisibility);
     onCleanup(() => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      loading.abort();
+      stopLoad?.();
       stop?.();
       detach?.();
       m.remove();
