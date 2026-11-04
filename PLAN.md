@@ -54,8 +54,8 @@ Tasks:
 ### M2: All of Norway, readable
 
 - [x] ~~Subscription without a bounding box~~ Retired: M8's replay shows all of Norway. `?live` stays the Bergen debug view until M4 makes live replay at 1x.
-- [ ] Models crossfade to glowing dots when zoomed out
-- [ ] Fading trails (`TripsLayer`), built from positions seen since page load
+- [x] Models crossfade to glowing dots when zoomed out
+- [x] Fading trails (`TripsLayer`), built from positions seen since page load
 - [ ] Info card on click: line, destination, delay, mode
 
 ### M3: Models per mode
