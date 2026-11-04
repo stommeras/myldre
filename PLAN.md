@@ -24,7 +24,7 @@ A 3D map of Norway with public transport vehicles moving on real terrain. Data c
 
 Build order: M1, then M5, then M8, then M2 to M4. Motion was the go/no-go question. Bergen is the cheap place to build it. The swarm prototype answered a second go/no-go: the project works zoomed out and sped up.
 
-### M8: Swarm replay (next)
+### M8: Swarm replay (done 2026-11-04)
 
 Decisions:
 
