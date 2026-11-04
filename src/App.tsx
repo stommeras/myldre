@@ -3,9 +3,10 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { BERGEN, createMap, NORWAY } from "./map/createMap";
 import { attachVehicleLayers } from "./map/vehicleLayers";
 import { InfoCard } from "./ui/InfoCard";
+import { LoadStatus } from "./ui/LoadStatus";
 import { SPEEDS, SpeedBar } from "./ui/SpeedBar";
 import { journeyShapes } from "./vehicles/shapes";
-import { loadRecording, ReplayClock, replaySource } from "./vehicles/replay";
+import { loadRecording, type Playback, RecordingMissing, ReplayClock, replaySource } from "./vehicles/replay";
 import { vehicleSource } from "./vehicles/source";
 import { VehicleStore } from "./vehicles/store";
 import type { Clock, VehicleId, VehicleSource } from "./vehicles/types";
@@ -29,11 +30,15 @@ export function App() {
 
   const [version, setVersion] = createSignal(store.version);
   const [selected, setSelected] = createSignal<VehicleId | null>(null);
-  const [replay, setReplay] = createSignal<ReplayClock | null>(null);
+  const [playback, setPlayback] = createSignal<Playback | null>(live ? null : { kind: "loading" });
+  const playing = () => {
+    const p = playback();
+    return p?.kind === "playing" ? p.clock : null;
+  };
   const asked = Number(params.get("speed"));
   const [speed, setSpeed] = createSignal<number>(SPEEDS.find((s) => s === asked) ?? 60);
   const changeSpeed = (s: number) => {
-    replay()?.setSpeed(s);
+    playing()?.setSpeed(s);
     setSpeed(s);
   };
   const info = createMemo(() => {
@@ -50,7 +55,7 @@ export function App() {
     const m = map;
     let detach: (() => void) | undefined;
     let stop: (() => void) | undefined;
-    let unmounted = false;
+    const loading = new AbortController();
     // Browser checks drive the map and store from outside (docs/vehicle-store.md, Answered in M1).
     const expose = () => import.meta.env.DEV && Object.assign(window, { map: m, store, clock });
     const start = (source: VehicleSource) => {
@@ -65,23 +70,26 @@ export function App() {
       start(vehicleSource);
     } else {
       const name = params.get("recording") ?? "2026-11-04-morning";
-      loadRecording(`/recordings/${name}.ndjson.gz`).then(
+      loadRecording(`/recordings/${name}.ndjson.gz`, loading.signal).then(
         (recording) => {
-          if (unmounted) return;
           const replayClock = new ReplayClock(recording, document.hidden ? 0 : speed());
           clock = replayClock;
-          setReplay(replayClock);
+          setPlayback({ kind: "playing", clock: replayClock });
           start(replaySource(recording, replayClock));
         },
-        (err) => console.error("recording failed to load", err),
+        (err) => {
+          if (loading.signal.aborted) return;
+          console.error("recording failed to load", err);
+          setPlayback({ kind: "failed", name, missing: err instanceof RecordingMissing });
+        },
       );
     }
     // A hidden tab gets no frames, so a running clock would hand every report it missed to one frame.
-    const onVisibility = () => replay()?.setSpeed(document.hidden ? 0 : speed());
+    const onVisibility = () => playing()?.setSpeed(document.hidden ? 0 : speed());
     document.addEventListener("visibilitychange", onVisibility);
     onCleanup(() => {
       document.removeEventListener("visibilitychange", onVisibility);
-      unmounted = true;
+      loading.abort();
       stop?.();
       detach?.();
       m.remove();
@@ -92,7 +100,8 @@ export function App() {
     <>
       <div ref={container} class="map" />
       <InfoCard info={info()} onClose={() => setSelected(null)} />
-      <Show when={replay()}>
+      <LoadStatus playback={playback()} />
+      <Show when={playing()}>
         <SpeedBar speed={speed()} onSpeed={changeSpeed} />
       </Show>
     </>
