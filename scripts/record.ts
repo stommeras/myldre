@@ -4,7 +4,7 @@
 import { createWriteStream } from "node:fs";
 import { createGzip } from "node:zlib";
 import { createClient } from "graphql-ws";
-import { QUERY } from "../src/vehicles/source.ts";
+import { QUERY, URL } from "../src/vehicles/source.ts";
 
 const [minutes, file] = process.argv.slice(2);
 if (!Number(minutes) || !file) throw new Error("usage: node scripts/record.ts <minutes> <out.ndjson.gz>");
@@ -12,7 +12,7 @@ if (!Number(minutes) || !file) throw new Error("usage: node scripts/record.ts <m
 const gzip = createGzip();
 const out = gzip.pipe(createWriteStream(file));
 const client = createClient({
-  url: "wss://api.entur.io/realtime/v2/vehicles/subscriptions?ET-Client-Name=steff-myldre",
+  url: URL,
   webSocketImpl: WebSocket,
   retryAttempts: Infinity,
   shouldRetry: () => true,

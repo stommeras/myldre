@@ -93,7 +93,7 @@ export function attachVehicleLayers(
       next.set(id, easeLook(moved.get(id), lng, lat, now, ease));
     }
     moved = next;
-    overlay.setProps({ layers: vehicleLayers(frame, (id) => moved.get(id) ?? HIDDEN, map.getZoom(), seconds(now), seconds, trailLengthMs(clock.speed)) });
+    overlay.setProps({ layers: vehicleLayers(frame, (id) => moved.get(id)!, map.getZoom(), seconds(now), seconds, trailLengthMs(clock.speed)) });
     raf = requestAnimationFrame(tick);
   });
 
@@ -197,7 +197,6 @@ interface Moved {
 }
 
 type Look = Pick<Moved, "dim" | "fadeIn">;
-const HIDDEN: Look = { dim: 0, fadeIn: 0 };
 
 const MOVING_CORE = [255, 245, 225, 255] as const;
 

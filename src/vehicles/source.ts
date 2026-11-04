@@ -7,7 +7,7 @@ import { createClient } from "graphql-ws";
 import type { JourneyId, Mode, VehicleId, VehicleReport, VehicleSource } from "./types";
 
 /** The browser can't set headers on a WebSocket, so the client name rides on the URL (SPIKES.md). */
-const URL = "wss://api.entur.io/realtime/v2/vehicles/subscriptions?ET-Client-Name=steff-myldre";
+export const URL = "wss://api.entur.io/realtime/v2/vehicles/subscriptions?ET-Client-Name=steff-myldre";
 
 /** M1: Bergen. M2: null, all of Norway. */
 const BBOX: { minLat: number; minLon: number; maxLat: number; maxLon: number } | null = {
