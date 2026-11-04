@@ -65,7 +65,8 @@ export type ShapeLookup = (journey: JourneyId) => Promise<readonly LngLat[] | nu
 
 /**
  * Where vehicle reports come from: the one seam between a wire format and the app.
- * Implemented once, by `source.ts`. M4 rewrites that file for the relay and nothing else changes.
+ * Two adapters: `source.ts` live and `replay.ts` from a recording. M4 rewrites `source.ts` for the relay
+ * and nothing else changes.
  *
  * Calling it connects. `onReports` receives batches of full domain states. The returned function
  * disconnects. A source reconnects on its own and never surfaces wire types.

@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { encodeLine } from "./entur";
 import { loadRecording, LOOP_GAP_MS, RecordingMissing, ReplayClock, replaySource, type Recording } from "./replay";
 import type { VehicleId, VehicleReport } from "./types";
 
@@ -96,8 +97,8 @@ const wire = (id: string, dest: string) => ({
   location: { latitude: 60.39, longitude: 5.32 }, line: { publicCode: "3" }, destinationName: dest,
 });
 const LINES_PAST_ONE_CHUNK = 3000;
-const ndjson = Array.from({ length: LINES_PAST_ONE_CHUNK }, (_, i) => [LINES_PAST_ONE_CHUNK - i, wire(`v${LINES_PAST_ONE_CHUNK - i}`, i % 2 ? "Åsane" : "Bønes")])
-  .map((l) => JSON.stringify(l)).join("\n");
+const ndjson = Array.from({ length: LINES_PAST_ONE_CHUNK }, (_, i) => encodeLine(LINES_PAST_ONE_CHUNK - i, wire(`v${LINES_PAST_ONE_CHUNK - i}`, i % 2 ? "Åsane" : "Bønes")))
+  .join("");
 const gzip = async (text: string) =>
   new Uint8Array(await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer());
 
@@ -118,7 +119,7 @@ it("rejects a truncated gzip", async () => {
 });
 
 it("rejects a malformed JSON line", async () => {
-  vi.stubGlobal("fetch", async () => new Response(`${JSON.stringify([1, wire("a", "Bønes")])}\n{oops\n`));
+  vi.stubGlobal("fetch", async () => new Response(`${encodeLine(1, wire("a", "Bønes"))}{oops\n`));
   await expect(loadRecording("/r.ndjson")).rejects.toThrow(SyntaxError);
 });
 

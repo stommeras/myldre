@@ -81,7 +81,7 @@ Nobody tells the store that a shape arrived, and nobody advances a clock. After 
 | File | Owns | Public surface | M5 change |
 |---|---|---|---|
 | `vehicles/types.ts` | Domain vocabulary and both seam types | `VehicleId`, `JourneyId`, `LngLat`, `Position3`, `Mode`, `Journey`, `VehicleReport`, `VehicleSource`, `ShapeLookup` | Adds `JourneyId`, `VehicleReport.journeyId`, `ShapeLookup`. `Journey` is unchanged. The `VehicleReport` comment drops its pointer to `speedMps`. |
-| `vehicles/source.ts` | graphql-ws and the wire parse. M4 rewrites it. | `vehicleSource` | Selects `serviceJourney { id }` and parses it into `journeyId` |
+| `vehicles/source.ts` | graphql-ws subscription over `entur.ts`, which holds the wire parse and recording lines. M4 rewrites `source.ts`. | `vehicleSource` | Selects `serviceJourney { id }` and parses it into `journeyId` |
 | `vehicles/source.test.ts` | Parser tests | | Adds a case that parses `serviceJourney.id` into `journeyId`, and null when it is missing |
 | `vehicles/shapes.ts` | Journey Planner fetch, batching, polyline decode, the 10 s abort. M4 rewrites it. | `journeyShapes` | New |
 | `vehicles/route.ts` | Pure geometry on one shape, in local metres | `prepareShape`, `passesNear`, `pointAlong`, `verticesBetween`, `distanceMetres`, `bearingBetween`, `OFF_SHAPE_M`, `Pass` | New, replaces `motion.ts` |

@@ -1,4 +1,4 @@
-import { parseVehicle, type WireVehicle } from "./source";
+import { decodeLine } from "./entur";
 import { FORGET_MS } from "./store";
 import type { Clock, VehicleReport, VehicleSource } from "./types";
 
@@ -31,12 +31,7 @@ export async function loadRecording(url: string, signal?: AbortSignal): Promise<
   const bytes = gzipped ? blob.stream().pipeThrough(new DecompressionStream("gzip")) : blob.stream();
   const reader = bytes.pipeThrough(new TextDecoderStream()).getReader();
   const entries: Recording["entries"] = [];
-  const parseLine = (line: string) => {
-    if (!line) return;
-    const [arrivalMs, wire] = JSON.parse(line) as [number, unknown];
-    if (typeof wire !== "object" || wire === null) return;
-    for (const report of parseVehicle(wire as WireVehicle)) entries.push({ arrivalMs, report });
-  };
+  const parseLine = (line: string) => entries.push(...decodeLine(line));
   try {
     let rest = "";
     let yieldedAt = performance.now();
