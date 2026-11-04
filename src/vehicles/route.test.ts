@@ -73,7 +73,7 @@ describe("prepareShape", () => {
   });
 });
 
-describe("grill: long shapes (2026-11-04)", () => {
+describe("long shapes", () => {
   it("measures OFF_SHAPE_M in true metres at the far end of a long north-south shape", () => {
     // Trondheim (63.43° N) to Bodø (67.28° N), like Nordlandsbanen, then 1 km east at Bodø.
     const lat = 67.28;

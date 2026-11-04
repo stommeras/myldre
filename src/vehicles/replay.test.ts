@@ -43,13 +43,16 @@ it("emits entries in order once their time passes, batched per frame", () => {
   expect(batches.map((b) => b.map((r) => r.id))).toEqual([["a"], ["b"]]);
 });
 
-it("re-emits the next loop shifted by D + LOOP_GAP_MS, and sim time stays monotonic", () => {
+it("re-emits the next loop shifted by D + 1 + LOOP_GAP_MS, and sim time stays monotonic", () => {
   const { clock, batches, advance } = setup();
   advance(D);
-  const [c, again] = [batches[0][2], batches[0][3]];
-  expect([c.id, again.id]).toEqual(["c", "a"]);
-  expect(again.recordedAt).toBe(999_000 + D + LOOP_GAP_MS);
-  expect(clock.now()).toBe(recording.startMs + D + LOOP_GAP_MS);
+  // The last entry lands in its own loop, not after the gap.
+  expect(batches.map((b) => b.map((r) => r.id))).toEqual([["a", "b", "c"]]);
+  advance(1);
+  const [again] = batches[1];
+  expect(again.id).toBe("a");
+  expect(again.recordedAt).toBe(999_000 + D + 1 + LOOP_GAP_MS);
+  expect(clock.now()).toBe(recording.startMs + D + 1 + LOOP_GAP_MS);
   let last = -Infinity;
   for (let i = 0; i < 100; i++) {
     advance(1_337);

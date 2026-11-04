@@ -108,7 +108,8 @@ export class ReplayClock implements Clock {
     private rate: number,
     private readonly wallNow: () => number = () => performance.now(),
   ) {
-    this.duration = Math.max(1, recording.endMs - recording.startMs);
+    // + 1 so a loop reaches endMs itself. Otherwise the last entries only land after the gap, stale.
+    this.duration = recording.endMs - recording.startMs + 1;
     this.loopPeriodMs = this.duration + LOOP_GAP_MS;
     this.wallAt = wallNow();
   }

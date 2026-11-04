@@ -84,7 +84,7 @@ Nobody tells the store that a shape arrived, and nobody advances a clock. After 
 | `vehicles/source.ts` | graphql-ws subscription over `entur.ts`, which holds the wire parse and recording lines. M4 rewrites `source.ts`. | `vehicleSource` | Selects `serviceJourney { id }` and parses it into `journeyId` |
 | `vehicles/source.test.ts` | Parser tests | | Adds a case that parses `serviceJourney.id` into `journeyId`, and null when it is missing |
 | `vehicles/shapes.ts` | Journey Planner fetch, batching, polyline decode, the 10 s abort. M4 rewrites it. | `journeyShapes` | New |
-| `vehicles/route.ts` | Pure geometry on one shape, in local metres | `prepareShape`, `passesNear`, `pointAlong`, `verticesBetween`, `distanceMetres`, `bearingBetween`, `OFF_SHAPE_M`, `Pass` | New, replaces `motion.ts` |
+| `vehicles/route.ts` | Pure geometry on one shape, measured in metres | `prepareShape`, `passesNear`, `pointAlong`, `verticesBetween`, `distanceMetres`, `bearingBetween`, `OFF_SHAPE_M`, `Pass` | New, replaces `motion.ts` |
 | `vehicles/motion.ts` | | | Deleted |
 | `vehicles/store.ts` | All per-vehicle state, the shape cache, and every motion rule | `VehicleStore`, `STALE_MS`, `TRAIL_MS`, `SHAPE_RETRY_MS`, `SPEED_CAP_MPS`, `ElevationAt`, `VehiclePose`, `TrailPath`, `Frame`, `VehicleInfo` | Rewritten inside, same methods |
 | `map/vehicleLayers.ts` | Everything deck.gl | `attachVehicleLayers` | None |
@@ -117,7 +117,7 @@ export type ShapeLookup = (journey: JourneyId) => Promise<readonly LngLat[] | nu
 
 ```ts
 // vehicles/store.ts, public
-export const STALE_MS = 2 * 60_000;
+export const STALE_MS = 3 * 60_000;
 export const TRAIL_MS = 5 * 60_000;
 /** The first wait before asking again for an unanswered journey. Each later wait doubles, up to 10 minutes. */
 export const SHAPE_RETRY_MS = 30_000;
@@ -202,8 +202,11 @@ function crossMs(spanMs: number, lagMs: number): number;
 // vehicles/route.ts, pure, imported only by store.ts
 /** Within this distance a position counts as on the shape. */
 export const OFF_SHAPE_M = 40;
-/** A shape in local metres around its first point, with cumulative distance per vertex. */
-export interface RouteShape { /* origin, scale, xs, ys, cum, length */ }
+/**
+ * A shape's vertices with cumulative distance per vertex. Each query measures in a local frame centred
+ * on its own point, so OFF_SHAPE_M holds on shapes that span many degrees of latitude.
+ */
+export interface RouteShape { /* lngs, lats, cum, length */ }
 /** Null for fewer than two distinct points. Drops repeated vertices, which have no heading. */
 export function prepareShape(points: readonly LngLat[]): RouteShape | null;
 /** One pass's nearest point to a position, and the bearing of the shape segment it lies on. */
@@ -243,10 +246,10 @@ Every time is epoch ms on the app's `Clock`, which is `Date.now()` when live and
 The first report `r0` of a run becomes a point at
 
 ```
-at = max(at of the path's last point, min(arrival, r0.recordedAt + 35 s))
+at = min(arrival, r0.recordedAt + 35 s)
 ```
 
-`arrival` is `now` for the first report a batch has for that vehicle. The `max` keeps times non-decreasing when a vehicle reappears while its old path still plays, which a capped segment can cause. Every later report of that vehicle in the same batch counts as arrived at the run's first `at`. Reports in any later batch arrive at `now`. So a multi-report first batch is stamped like this:
+`arrival` is `now` for the first report a batch has for that vehicle. When the old path still has points after `at`, which a capped segment can cause, the new run cuts it there. The store drops every point after `at` and adds one at the model's position at `at`, so the trail ends where the model was. Every later report of that vehicle in the same batch counts as arrived at the run's first `at`. A report that starts a new run inside a batch is judged at `max(arrival, r.recordedAt)` (see Building the path at ingest). Reports in any later batch arrive at `now`. So a multi-report first batch is stamped like this:
 
 - An Entur-direct report, recorded a couple of seconds ago, gets `at = now`. The vehicle shows at once.
 - A relay snapshot whose oldest report is 5 minutes old starts at that report plus 35 s. The rest of the batch counts as known by then, so it plays on the 35 s schedule and every point before `now` is trail. The model appears 35 s behind, inside its history.
@@ -273,7 +276,7 @@ At 1.25x the lag closes by 0.25 s a second, so closing it covers 5 × lag of rep
 
 The second term of `arrives` is the speed cap, applied to the drawn travel time. Whatever the schedule says, the model never covers `length` metres faster than the cap. The cap only slows the model, it never lets it run ahead of its schedule.
 
-When `lag` is over `MAX_LAG_MS`, 3 minutes, the fix starts a new run instead of a segment. The model jumps to the fix at `max(last at, min(arrival, r.recordedAt + 35 s))`, which is `now` for a live report, and eases in from there. The trail keeps a straight piece across the gap, as after a silence. Without this, a position stuck for 10 minutes would leave the model about 450 s over its target even after the 1.25x crossing, and at 0.25 s a second that takes about half an hour to close.
+When `lag` is over `MAX_LAG_MS`, 3 minutes, the fix starts a new run instead of a segment. The model jumps to the fix at `min(arrival, r.recordedAt + 35 s)`, which is `now` for a live report, and eases in from there. Any of the old path still ahead of that moment is cut, as for any new run. That matters after a long capped segment. Without the cut, every later fix would also pass the limit and wait for the old path to end. The trail keeps a straight piece across the gap, as after a silence. Without this, a position stuck for 10 minutes would leave the model about 450 s over its target even after the 1.25x crossing, and at 0.25 s a second that takes about half an hour to close.
 
 Every point of the segment gets an `at` proportional to its distance between `leaves` and `arrives`, so the model moves at constant speed within the segment. A segment where the lag closes partway moves at its average rate. When the model waits (`leaves` later than the last point's `at`), a hold point goes in first. It repeats the last position, stamped `leaves`. Without it TripsLayer would interpolate the trail head along the whole next piece while the model stands.
 
@@ -286,11 +289,11 @@ Real gaps aren't regular. Bergen's are p50 10 s and p90 31 s. Right after a wait
 
 ### Building the path at ingest
 
-`ingest` sorts the batch, groups it by vehicle, and drops reports no newer than the vehicle's `latest`. Then it handles each vehicle once.
+`ingest` drops reports recorded more than 60 s after `now`. One report from a vehicle with a broken clock or time zone would otherwise become `latest` and outrank every real report until the clock caught up. It then sorts the batch, groups it by vehicle, and drops reports no newer than the vehicle's `latest`. Then it handles each vehicle once.
 
 1. For each report in order:
-   - New or hidden. An ended report only refreshes `latest`, and the store drops it when it doesn't know the vehicle. It never starts a run and never adds a point, so a bus driving to the depot after its journey ends draws nothing. A live report starts a run, stamped as above. If its journey's shape is ready, the store projects the point onto the shape (see Snapping) and starts the cursor there. The cursor is cleared otherwise.
-   - Visible. `latest = r`. An ended report after an ended report adds nothing. A position exactly equal to `fix.position` is a freeze, no fix, and adds nothing, but it still keeps a frozen vehicle alive. Otherwise the store appends a segment, as below. The first ended report of a run is still a fix, so the model drives to the terminus.
+   - New or hidden. The store judges hidden at `max(arrival, r.recordedAt)`, not at `arrival` alone. In a history batch every report arrives at the first one's `at`. Judged only at `arrival`, a silence or a journey end inside the batch would never hide the vehicle, and the model would crawl across the gap. An ended report only refreshes `latest`, and the store drops it when it doesn't know the vehicle. It never starts a run and never adds a point, so a bus driving to the depot after its journey ends draws nothing. A live report starts a run, stamped as above. If its journey's shape is ready, the store projects the point onto the shape (see Snapping) and starts the cursor there. The cursor is cleared otherwise.
+   - Visible. `latest = r`. An ended report after an ended report adds nothing. A position exactly equal to `fix.position` is a freeze, no fix, and adds nothing, but it still keeps a frozen vehicle alive. A position further from the previous fix than 3 times the mode's speed cap could cover in the span is a GPS outlier. The store skips it the same way, once. If the next report is also that far, the store takes it, because the jump is then real. Without this, a 5 km glitch would be drawn as a 5 km drive out and back. On the 2026-11-04 morning recording for all of Norway (1.7M reports, 5536 vehicles) the rule skipped 240 of 1.57M fixes. In 44 of those the next report was back near the old fix, so the skipped one was a glitch. The other 196 were real jumps, which the model now reaches one report later. No report there was recorded more than 60 s ahead of its arrival. Otherwise the store appends a segment, as below. The first ended report of a run is still a fix, so the model drives to the terminus.
 2. Prune the front of the path.
 3. If the vehicle is visible at `now`, ask for the shape of its newest report's journey (see Shapes). History journeys and vehicles hidden on arrival ask for nothing.
 4. Forget vehicles silent for `STALE_MS + TRAIL_MS`, evict shapes no vehicle names, and bump `version` if a read could see a change. An ended report that only refreshes a hidden vehicle's `latest` bumps nothing.
@@ -328,7 +331,7 @@ How often the model stands at a mouth, measured on the Bergen capture (123 vehic
 The store owns the shape cache, `Map<JourneyId, ShapeEntry>`. There is one way for a shape to enter, the injected lookup.
 
 - Request. After each ingest, the store asks for the journey of each visible vehicle's newest report. It calls `shapeOf(journey)` when the journey has no entry, or when an `asked` entry is older than its wait. The wait is 30 s after the first ask, then 60 s, 120 s and so on, doubling up to 10 minutes. The new entry is `asked` with `requestedAt = now` and one more attempt. Two vehicles on one journey, repeated reports, and reports during the flight all share one call. Retry is driven by reports, so the store needs no timers.
-- Settle. The callbacks only write the entry. A shape becomes `ready`, prepared into local metres once. Null or fewer than two points becomes `none`. A rejection writes nothing, so the entry stays `asked` and the store asks again after its wait. A lookup that never settles is the same case, so it needs no rule of its own. A callback writes only if the entry is still the same object, so the store drops a late answer for an evicted journey, or for a journey it has asked again since. Settling changes no visible state, so it bumps nothing and needs no callback to the app.
+- Settle. The callbacks only write the entry. A shape becomes `ready`, with its cumulative distances computed once. Null or fewer than two points becomes `none`. A rejection writes nothing, so the entry stays `asked` and the store asks again after its wait. A lookup that never settles is the same case, so it needs no rule of its own. A callback writes only if the entry is still the same object, so the store drops a late answer for an evicted journey, or for a journey it has asked again since. Settling changes no visible state, so it bumps nothing and needs no callback to the app.
 - Use. A segment glides only with a `ready` shape at the moment it is built. A shape that lands before the vehicle's next report loses nothing, because the store projects the previous fix when it builds the next segment. A first batch with several reports is different. The store builds every one of its segments in that one ingest, before any shape can land, so a first batch draws straight. Entur-direct first batches are almost always one report, so today this costs little. The M4 relay snapshot sends about 5 minutes of history per vehicle, and all of it would draw straight (see Open questions).
 - Evict. After each ingest, the store drops entries for journeys that no known vehicle's newest report names. The cache is bounded by the number of live vehicles. A vehicle whose reports alternate between naming a journey and naming none makes its entry flap. That is harmless, because a re-ask is one cheap alias in a batched POST.
 
