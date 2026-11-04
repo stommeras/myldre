@@ -6,7 +6,7 @@ import { formatDelay } from "./formatDelay";
 const MODE_LABEL: Record<Mode, string> = {
   bus: "buss",
   coach: "ekspressbuss",
-  ferry: "båt",
+  ferry: "ferje",
   train: "tog",
   other: "annet",
 };
