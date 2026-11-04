@@ -1,4 +1,4 @@
-import { parseVehicle, type WireVehicle } from "./source";
+import { decodeLine } from "./entur";
 import { FORGET_MS } from "./store";
 import type { Clock, VehicleReport, VehicleSource } from "./types";
 
@@ -14,7 +14,39 @@ export class RecordingMissing extends Error {}
 export type Playback =
   | { kind: "loading" }
   | { kind: "failed"; name: string; missing: boolean }
-  | { kind: "playing"; clock: ReplayClock };
+  | { kind: "playing"; clock: ReplayClock; source: VehicleSource };
+
+type Page = Pick<Document, "hidden" | "addEventListener" | "removeEventListener">;
+
+/**
+ * Plays `public/recordings/<name>.ndjson.gz`. Reports loading, then playing or failed. While it
+ * plays, a hidden page pauses the clock and keeps the chosen speed. The returned stop cancels a
+ * pending load and drops the page listener. Nothing is reported after stop.
+ */
+export function playRecording(name: string, speed: number, onChange: (p: Playback) => void, page: Page = document): () => void {
+  const loading = new AbortController();
+  let clock: ReplayClock | undefined;
+  const onVisibility = () => clock?.setPaused(page.hidden);
+  onChange({ kind: "loading" });
+  loadRecording(`/recordings/${name}.ndjson.gz`, loading.signal).then(
+    (recording) => {
+      if (loading.signal.aborted) return;
+      clock = new ReplayClock(recording, speed);
+      clock.setPaused(page.hidden);
+      page.addEventListener("visibilitychange", onVisibility);
+      onChange({ kind: "playing", clock, source: replaySource(recording, clock) });
+    },
+    (err) => {
+      if (loading.signal.aborted) return;
+      console.error("recording failed to load", err);
+      onChange({ kind: "failed", name, missing: err instanceof RecordingMissing });
+    },
+  );
+  return () => {
+    loading.abort();
+    page.removeEventListener("visibilitychange", onVisibility);
+  };
+}
 
 const YIELD_AFTER_MS = 50;
 
@@ -31,12 +63,7 @@ export async function loadRecording(url: string, signal?: AbortSignal): Promise<
   const bytes = gzipped ? blob.stream().pipeThrough(new DecompressionStream("gzip")) : blob.stream();
   const reader = bytes.pipeThrough(new TextDecoderStream()).getReader();
   const entries: Recording["entries"] = [];
-  const parseLine = (line: string) => {
-    if (!line) return;
-    const [arrivalMs, wire] = JSON.parse(line) as [number, unknown];
-    if (typeof wire !== "object" || wire === null) return;
-    for (const report of parseVehicle(wire as WireVehicle)) entries.push({ arrivalMs, report });
-  };
+  const parseLine = (line: string) => entries.push(...decodeLine(line));
   try {
     let rest = "";
     let yieldedAt = performance.now();
@@ -81,26 +108,44 @@ export class ReplayClock implements Clock {
     private rate: number,
     private readonly wallNow: () => number = () => performance.now(),
   ) {
-    this.duration = Math.max(1, recording.endMs - recording.startMs);
+    // + 1 so a loop reaches endMs itself. Otherwise the last entries only land after the gap, stale.
+    this.duration = recording.endMs - recording.startMs + 1;
     this.loopPeriodMs = this.duration + LOOP_GAP_MS;
     this.wallAt = wallNow();
   }
 
+  private paused = false;
+
+  /** The chosen speed. Still the chosen speed while paused. */
   get speed(): number {
     return this.rate;
   }
 
   now(): number {
-    const v = this.virtual + (this.wallNow() - this.wallAt) * this.rate;
+    const v = this.virtual + (this.wallNow() - this.wallAt) * this.running();
     const k = Math.floor(v / this.duration);
     return this.recording.startMs + (v - k * this.duration) + k * this.loopPeriodMs;
   }
 
   setSpeed(speed: number): void {
-    const t = this.wallNow();
-    this.virtual += (t - this.wallAt) * this.rate;
-    this.wallAt = t;
+    this.rebase();
     this.rate = speed;
+  }
+
+  /** Holds sim time without changing the chosen speed. A hidden tab gets no frames, so a running clock would hand every report it missed to one frame. */
+  setPaused(paused: boolean): void {
+    this.rebase();
+    this.paused = paused;
+  }
+
+  private running(): number {
+    return this.paused ? 0 : this.rate;
+  }
+
+  private rebase(): void {
+    const t = this.wallNow();
+    this.virtual += (t - this.wallAt) * this.running();
+    this.wallAt = t;
   }
 }
 

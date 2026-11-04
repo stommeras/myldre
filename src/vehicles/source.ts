@@ -1,13 +1,11 @@
 /**
  * Entur direct (M1 to M3): one graphql-ws subscription, batches of up to 20 full vehicle states.
  * In M4 this file is rewritten in place for the relay. It keeps exporting `vehicleSource`, and no
- * other file changes. Wire types stay in here.
+ * other file changes. The wire format lives in `entur.ts`, which replay and the recorder share.
  */
 import { createClient } from "graphql-ws";
-import type { JourneyId, Mode, VehicleId, VehicleReport, VehicleSource } from "./types";
-
-/** The browser can't set headers on a WebSocket, so the client name rides on the URL (SPIKES.md). */
-const URL = "wss://api.entur.io/realtime/v2/vehicles/subscriptions?ET-Client-Name=steff-myldre";
+import { parseVehicle, QUERY, URL, type WireVehicle } from "./entur";
+import type { VehicleSource } from "./types";
 
 /** M1: Bergen. M2: null, all of Norway. */
 const BBOX: { minLat: number; minLon: number; maxLat: number; maxLon: number } | null = {
@@ -16,34 +14,6 @@ const BBOX: { minLat: number; minLon: number; maxLat: number; maxLon: number } |
   maxLat: 60.55,
   maxLon: 5.5,
 };
-
-/** The spike's query, trimmed to what we parse, plus `destinationName` (in the live schema). */
-export const QUERY = /* GraphQL */ `
-  subscription Vehicles($bbox: BoundingBox) {
-    vehicles(boundingBox: $bbox) {
-      vehicleId mode vehicleStatus lastUpdated bearing delay destinationName
-      location { latitude longitude }
-      line { publicCode }
-      codespace { codespaceId }
-      serviceJourney { id }
-    }
-  }
-`;
-
-/** Wire shape. Everything nullable because it's untrusted input. */
-export interface WireVehicle {
-  vehicleId?: string | null;
-  codespace?: { codespaceId?: string | null } | null;
-  lastUpdated?: string | null;
-  location?: { latitude?: number | null; longitude?: number | null } | null;
-  bearing?: number | null;
-  vehicleStatus?: string | null;
-  mode?: string | null;
-  delay?: number | null;
-  destinationName?: string | null;
-  line?: { publicCode?: string | null } | null;
-  serviceJourney?: { id?: string | null } | null;
-}
 
 export const vehicleSource: VehicleSource = (onReports) => {
   // graphql-ws re-subscribes after a reconnect. The burst of repeats and stale records that
@@ -65,48 +35,3 @@ export const vehicleSource: VehicleSource = (onReports) => {
     void client.dispose();
   };
 };
-
-/**
- * Wire to domain. Drops a record missing id, codespace, time or position. Each operator picks its
- * own vehicle ids, so the id is prefixed with the codespace, e.g. `SKY:101`.
- * Returns [] or [report] for flatMap.
- */
-export function parseVehicle(w: WireVehicle): VehicleReport[] {
-  const recordedAt = Date.parse(w.lastUpdated ?? "");
-  const lat = w.location?.latitude;
-  const lng = w.location?.longitude;
-  const codespace = w.codespace?.codespaceId;
-  if (!w.vehicleId || !codespace || !Number.isFinite(recordedAt) || !isFiniteNumber(lat) || !isFiniteNumber(lng)) return [];
-  const line = w.line?.publicCode;
-  const journeyId = w.serviceJourney?.id;
-  return [
-    {
-      id: `${codespace}:${w.vehicleId}` as VehicleId,
-      recordedAt,
-      position: [lng, lat],
-      bearing: isFiniteNumber(w.bearing) ? ((w.bearing % 360) + 360) % 360 : null,
-      journeyEnded: w.vehicleStatus === "COMPLETED" || w.vehicleStatus === "CANCELLED",
-      mode: parseMode(w.mode),
-      journey: line
-        ? { line, destination: w.destinationName ?? null, delaySeconds: isFiniteNumber(w.delay) ? w.delay : null }
-        : null,
-      journeyId: journeyId ? (journeyId as JourneyId) : null,
-    },
-  ];
-}
-
-/** Entur's VehicleModeEnumeration. TRAM, METRO, AIR and TAXI fall through to `other`. */
-const MODES = new Map<string, Mode>([
-  ["BUS", "bus"],
-  ["COACH", "coach"],
-  ["FERRY", "ferry"],
-  ["RAIL", "train"],
-]);
-
-function parseMode(mode: string | null | undefined): Mode {
-  return MODES.get(mode ?? "") ?? "other";
-}
-
-function isFiniteNumber(x: unknown): x is number {
-  return typeof x === "number" && Number.isFinite(x);
-}

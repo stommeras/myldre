@@ -21,6 +21,10 @@ const EASE_IN = 0.8;
 /** A fix whose lag would pass this starts a new run there. Above the 145 s the Bergen capture's longest tunnel needs. */
 const MAX_LAG_MS = 3 * 60_000;
 const SHAPE_RETRY_MAX_MS = 10 * 60_000;
+/** A report recorded further ahead of `now` than this has a broken clock and is dropped. */
+const FUTURE_SLACK_MS = 60_000;
+/** A fix this many times faster than the mode's cap from the previous fix is a GPS outlier, skipped once. */
+const OUTLIER_FACTOR = 3;
 const BACKWARD_GRACE_M = 15;
 /** A glide longer along the shape than DETOUR_FACTOR × its chord + DETOUR_SLACK_M is taken as the wrong pass. */
 const DETOUR_FACTOR = 2;
@@ -97,6 +101,8 @@ interface VehicleState {
   path: PathPoint[];
   /** Terrain epoch at which every path point was last sampled. Only the z sweep writes it. */
   zEpoch: number;
+  /** The newest report was skipped as an outlier, so the next one is taken whatever its speed. */
+  skipped: boolean;
 }
 
 type ShapeEntry =
@@ -136,7 +142,9 @@ export class VehicleStore {
   /** Upserts a batch in any order, possibly repeated or historical. Idempotent. Asks for missing shapes. */
   ingest(reports: readonly VehicleReport[], now: number): void {
     const byVehicle = new Map<VehicleId, VehicleReport[]>();
-    for (const r of [...reports].sort((a, b) => a.recordedAt - b.recordedAt)) {
+    // One report from a vehicle with a broken clock would otherwise outrank every real one after it.
+    const believable = reports.filter((r) => r.recordedAt <= now + FUTURE_SLACK_MS);
+    for (const r of believable.sort((a, b) => a.recordedAt - b.recordedAt)) {
       const list = byVehicle.get(r.id) ?? [];
       list.push(r);
       byVehicle.set(r.id, list);
@@ -148,13 +156,15 @@ export class VehicleStore {
       let touched = false;
       for (const r of batch) {
         if (v && r.recordedAt <= v.latest.recordedAt) continue;
-        // `arrival`, not `now`: a history batch must not find the vehicle silent at its own older reports.
-        if (!v || this.#hidden(v, arrival)) {
+        // Not `now`: a history batch must not find the vehicle silent at its own older reports. Not
+        // `arrival` alone either: a silence or a journey end inside the batch hides it at that report.
+        const seen = Math.max(arrival, r.recordedAt);
+        if (!v || this.#hidden(v, seen)) {
           if (r.journeyEnded) {
             if (v) v.latest = r;
             continue;
           }
-          v = this.#startRun(id, v, r, arrival);
+          v = this.#startRun(id, v, r, seen);
           arrival = v.path[v.path.length - 1].at;
           touched = true;
           continue;
@@ -163,6 +173,11 @@ export class VehicleStore {
         const wasEnded = v.latest.journeyEnded;
         v.latest = r;
         if ((wasEnded && r.journeyEnded) || samePosition(r.position, v.fix.position)) continue;
+        if (!v.skipped && isOutlier(v.fix, r)) {
+          v.skipped = true;
+          continue;
+        }
+        v.skipped = false;
         const leaves = Math.max(v.path[v.path.length - 1].at, arrival);
         if (leaves - v.fix.recordedAt - DELAY_MS > MAX_LAG_MS) {
           this.#startRun(id, v, r, arrival);
@@ -241,6 +256,14 @@ export class VehicleStore {
   /** Starts a run at `r`: a new vehicle, a hidden one, or a fix whose lag would pass MAX_LAG_MS. */
   #startRun(id: VehicleId, v: VehicleState | undefined, r: VehicleReport, arrival: number): VehicleState {
     const path = v?.path ?? [];
+    const at = Math.min(arrival, r.recordedAt + DELAY_MS);
+    // The new run replaces whatever the old one had still to play. Otherwise a capped crawl toward a
+    // far-off fix would hold every later run until it ends.
+    if (path.length > 0 && path[path.length - 1].at > at) {
+      const cut = poseOn(path, at);
+      while (path.length > 0 && path[path.length - 1].at > at) path.pop();
+      path.push({ position: cut.position, at, heading: cut.bearing });
+    }
     const last = path.at(-1);
     let drawn = r.position;
     let cursor: Cursor | null = null;
@@ -252,7 +275,7 @@ export class VehicleStore {
     }
     path.push({
       position: [drawn[0], drawn[1], this.#elevationAt(drawn) ?? last?.position[2] ?? 0],
-      at: Math.max(last?.at ?? -Infinity, Math.min(arrival, r.recordedAt + DELAY_MS)),
+      at: Math.max(last?.at ?? -Infinity, at),
       heading: r.bearing ?? last?.heading ?? 0,
     });
     const fix = { position: r.position, recordedAt: r.recordedAt, bearing: r.bearing };
@@ -260,9 +283,10 @@ export class VehicleStore {
       v.latest = r;
       v.fix = fix;
       v.cursor = cursor;
+      v.skipped = false;
       return v;
     }
-    const state: VehicleState = { latest: r, fix, cursor, path, zEpoch: -1 };
+    const state: VehicleState = { latest: r, fix, cursor, path, zEpoch: -1, skipped: false };
     this.#vehicles.set(id, state);
     return state;
   }
@@ -401,6 +425,12 @@ function nearestTo(passes: Pass[], along: number): Pass | undefined {
   let best: Pass | undefined;
   for (const p of passes) if (!best || Math.abs(p.along - along) < Math.abs(best.along - along)) best = p;
   return best;
+}
+
+/** `r` lies further from the previous fix than OUTLIER_FACTOR times its mode's cap could cover. */
+function isOutlier(fix: Fix, r: VehicleReport): boolean {
+  const reach = (OUTLIER_FACTOR * SPEED_CAP_MPS[r.mode] * (r.recordedAt - fix.recordedAt)) / 1000;
+  return distanceMetres(fix.position, r.position) > reach;
 }
 
 function samePosition(a: LngLat, b: LngLat): boolean {

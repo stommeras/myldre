@@ -96,15 +96,14 @@ async function send(batch: Waiter[]): Promise<void> {
   }
 }
 
-let queue: Waiter[] = [];
+const queue: Waiter[] = [];
 let inFlight = false;
 let scheduled = false;
 
 function pump(): void {
   if (inFlight || queue.length === 0) return;
   inFlight = true;
-  const batch = queue.slice(0, MAX_ALIASES_PER_POST);
-  queue = queue.slice(MAX_ALIASES_PER_POST);
+  const batch = queue.splice(0, MAX_ALIASES_PER_POST);
   void send(batch).finally(() => {
     inFlight = false;
     pump();

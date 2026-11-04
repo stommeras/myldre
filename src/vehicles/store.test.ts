@@ -285,19 +285,20 @@ describe("playback clock", () => {
     expect(knots(trailOf(s.frame(202_000)))).toEqual([[0, 0], [50, 0], [500, 0]]);
   });
 
-  it("starts a reappearing vehicle's new run no earlier than the end of its old path", async () => {
+  it("cuts the old run's unplayed path where the model is when a hidden vehicle reappears", async () => {
     const s = newStore();
     await receive(s, [at(0, 0, 0, null), at(10, 100, 0, null)]);
-    const leaves = 72_000;
-    s.ingest([at(70, 6100, 0, null)], leaves);
-    const cappedArrival = leaves + ((6100 - 100) / SPEED_CAP_MPS.bus) * 1000;
-    const back = 70_000 + STALE_MS + 10_000;
-    expect(back).toBeLessThan(cappedArrival);
-    expect(poseAt(s, back)).toBeUndefined();
-    s.ingest([at(back / 1000, 6500, 0, null)], back + 2_000);
-    const stillOld = back + 20_000;
-    expectAt(s, stillOld, 100 + SPEED_CAP_MPS.bus * ((stillOld - leaves) / 1000), 0);
-    expectAt(s, cappedArrival, 6500, 0);
+    const leaves = 102_000;
+    s.ingest([at(100, 4900, 0, null)], leaves);
+    // 4800 m at the cap takes 192 s, arriving at 294 s. Silence hides the model at 280 s, on its way.
+    const back = 292_000;
+    expect(back).toBeLessThan(leaves + (4800 / SPEED_CAP_MPS.bus) * 1000);
+    expect(poseAt(s, back - 10_000)).toBeUndefined();
+    s.ingest([at(290, 5000, 0, null)], back);
+    // The new run starts at once. The trail keeps the crawl up to where the model was at 292 s.
+    expectAt(s, back, 5000, 0);
+    const reached = 100 + (SPEED_CAP_MPS.bus * (back - leaves)) / 1000; // 4850 m
+    expect(knots(trailOf(s.frame(back))).slice(-2)).toEqual([[reached, 0], [5000, 0]]);
   });
 });
 
@@ -856,5 +857,58 @@ describe("trail", () => {
     const late = 6_000 + STALE_MS + TRAIL_MS;
     s.ingest([report({ id: V2, recordedAt: late })], late);
     expect(s.frame(late).trails.filter((t) => t.id === V1)).toHaveLength(0);
+  });
+});
+
+describe("bad input and history batches", () => {
+  it("recovers within a minute from one GPS outlier 50 km away", async () => {
+    const s = newStore();
+    await receive(s, [at(0, 0, 0, null), at(10, 100, 0, null), at(20, 200, 0, null), at(30, 300, 0, null)]);
+    s.ingest([at(40, 50_000, 0, null)], 42_000);
+    for (let t = 50; t <= 240; t += 10) s.ingest([at(t, t * 10, 0, null)], t * 1000 + LATENCY);
+    // Real reports have been back for 190 s. The model should be near them, not still driving
+    // toward the outlier at the speed cap.
+    const [x] = xy(poseAt(s, 240_000)!.position);
+    expect(x).toBeLessThan(3_000);
+  });
+
+  it("skips one fix over 3 times the cap from the last, so a 5 km glitch draws no trip out and back", async () => {
+    const s = newStore();
+    await receive(s, [at(0, 0, 0, null), at(10, 100, 0, null), at(20, 200, 0, null), at(30, 300, 0, null)]);
+    s.ingest([at(40, 5_300, 0, null)], 42_000);
+    for (let t = 50; t <= 120; t += 10) s.ingest([at(t, t * 10, 0, null)], t * 1000 + LATENCY);
+    for (let now = 65_000; now <= 155_000; now += 1_000) expect(xy(poseAt(s, now)!.position)[0]).toBeLessThanOrEqual(1_200.5);
+    expectAt(s, 155_000, 1200, 0);
+  });
+
+  it("takes a second fast fix in a row, because then the jump is real", async () => {
+    const s = newStore();
+    await receive(s, [at(0, 0, 0, null), at(10, 100, 0, null)]);
+    s.ingest([at(20, 5_100, 0, null)], 22_000);
+    s.ingest([at(30, 5_200, 0, null)], 32_000);
+    // The second one is a fix: leaves 45, lag 0, 20 s of reports, but 5100 m at the cap takes 204 s.
+    expectAt(s, 147_000, 100 + SPEED_CAP_MPS.bus * 102, 0); // 102 s into the crawl, 2650 m
+  });
+
+  it("does not let one report stamped an hour ahead freeze the vehicle", async () => {
+    const s = newStore();
+    await receive(s, [at(0, 0, 0, null), at(10, 100, 0, null)]);
+    s.ingest([at(3_600, 150, 0, null)], 22_000); // a clock or time zone bug on the vehicle
+    for (let t = 30; t <= 120; t += 10) s.ingest([at(t, t * 10, 0, null)], t * 1000 + LATENCY);
+    const [x] = xy(poseAt(s, 155_000)!.position);
+    expect(x).toBeGreaterThan(1_000); // the 120 s report, 1200 m, is reached at 155 s
+  });
+
+  it("does not crawl across a silence longer than STALE_MS inside one history batch", () => {
+    const s = newStore();
+    // 4 minutes of silence between 5 s and 245 s. Live, the vehicle hides after STALE_MS and
+    // reappears at (5000, 0). One history batch should not draw it crawling 5 km through the gap.
+    s.ingest([at(0, 0, 0, null), at(5, 50, 0, null), at(245, 5000, 0, null), at(255, 5100, 0, null)], 262_000);
+    for (let now = 262_000; now <= 290_000; now += 1_000) {
+      const pose = poseAt(s, now);
+      if (!pose) continue;
+      const [x] = xy(pose.position);
+      expect(x < 51 || x > 4999, `x at ${now} is ${Math.round(x)}`).toBe(true);
+    }
   });
 });
