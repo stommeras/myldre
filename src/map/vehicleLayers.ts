@@ -7,7 +7,14 @@ import type { Map as MapLibreMap, MapSourceDataEvent } from "maplibre-gl";
 import { TRAIL_MS, type Frame, type TrailPath, type VehicleStore, type VehiclePose } from "../vehicles/store";
 import type { Clock, Mode, VehicleId } from "../vehicles/types";
 
-const GENERIC_MODEL = "/models/generic.glb";
+export const MODEL: Record<Mode, string> = {
+  bus: "/models/bus.glb",
+  coach: "/models/bus.glb",
+  ferry: "/models/ferry.glb",
+  train: "/models/train.glb",
+  other: "/models/generic.glb",
+};
+const MODEL_URLS = [...new Set(Object.values(MODEL))];
 /** The nose is glTF +Z, which faces south after the 90° roll. Checked by eye with side views at bearings 90 and 225. */
 const MODEL_YAW_OFFSET = 180;
 /** Glowing accents on the dark base, one per mode. */
@@ -115,7 +122,6 @@ function vehicleLayers(
   const { far, near } = DOT_PX;
   const dot = mix(far.px, near.px, Math.min(1, Math.max(0, (zoom - far.zoom) / (near.zoom - far.zoom))));
   // No beforeId: vehicles draw above the basemap labels (SPIKES.md, deck.gl#10700).
-  // M3: one ScenegraphLayer per model, from a Record<Mode, url>, each fed poses filtered by mode.
   return [
     new TripsLayer<TrailPath>({
       id: "trails",
@@ -162,20 +168,23 @@ function vehicleLayers(
       pickable: true,
       parameters: ADDITIVE_NO_DEPTH,
     }),
-    new ScenegraphLayer<VehiclePose>({
-      id: "models",
-      data: poses,
-      visible: models > 0,
-      opacity: models,
-      scenegraph: GENERIC_MODEL,
-      sizeScale: 3,
-      sizeMinPixels: 1.5,
-      _lighting: "pbr",
-      getPosition: (d) => d.position,
-      getOrientation: (d) => [0, MODEL_YAW_OFFSET - d.bearing, 90],
-      getColor: (d) => GLOW[d.mode],
-      pickable: true,
-    }),
+    ...MODEL_URLS.map(
+      (url) =>
+        new ScenegraphLayer<VehiclePose>({
+          id: `models:${url}`,
+          data: poses.filter((d) => MODEL[d.mode] === url),
+          visible: models > 0,
+          opacity: models,
+          scenegraph: url,
+          sizeScale: 3,
+          sizeMinPixels: 1.5,
+          _lighting: "pbr",
+          getPosition: (d) => d.position,
+          getOrientation: (d) => [0, MODEL_YAW_OFFSET - d.bearing, 90],
+          getColor: (d) => GLOW[d.mode],
+          pickable: true,
+        }),
+    ),
   ];
 }
 

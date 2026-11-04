@@ -7,7 +7,8 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "replay": "vitest run scripts/replay.test.ts"
+    "replay": "vitest run scripts/replay.test.ts",
+    "models": "node scripts/make-model.mjs"
   },
   "dependencies": {
     "@deck.gl/core": "9.4.0",

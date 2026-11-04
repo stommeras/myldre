@@ -61,9 +61,9 @@ Tasks:
 
 ### M3: Models per mode
 
-- [ ] Ferry
-- [ ] Train
-- [ ] Bus, with coach as a tinted bus
+- [x] Ferry
+- [x] Train
+- [x] Bus, with coach as a tinted bus
 
 ### M4: Rust relay and deploy
 
