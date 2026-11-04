@@ -29,13 +29,15 @@ Build order: M1, then M5, then M8, then M2 to M4. Motion was the go/no-go questi
 Decisions:
 
 - Replay is the default view. The existing live path stays reachable behind `?live`, untouched, until M4. M4's relay keeps a rolling buffer, and live becomes replay at 1x pinned to the buffer's newest report. The separate live path goes then.
-- Recordings are static files until M4. A Node recorder subscribes with `source.ts`'s query, without the bounding box, and writes each received vehicle as `[arrivalMs, wireVehicle]` to gzipped NDJSON. Raw wire records keep one parser, and `serviceJourney.id` comes along for shapes. The prototype's recorder dropped it. Files go in `public/recordings/`, gitignored. Whether to commit them is decided at deploy. Size: 15 minutes of all-Norway was 7.7 MB in the prototype's compact format.
+- Recordings are static files until M4. A Node recorder subscribes with `source.ts`'s query, without the bounding box, and writes each received vehicle as `[arrivalMs, wireVehicle]` to gzipped NDJSON. Raw wire records keep one parser, and `serviceJourney.id` comes along for shapes. The prototype's recorder dropped it. Files go in `public/recordings/`, gitignored. Whether to commit them is decided at deploy. Size: the 2h10m morning recording is 94 MB gzipped and 642 MB decompressed, past V8's 536,870,888-character string limit, so `loadRecording` streams the body line by line instead of decoding it into one string. Vite's dev server sends the `.gz` with `Content-Encoding: gzip`, so the browser usually decodes it before the loader sees it.
 - One sim clock replaces `Date.now()` at its four call sites: `App.tsx` (info and ingest) and `vehicleLayers.ts` (`T0` and the tick). Replay hands each report to `store.ingest` when the sim clock passes its `arrivalMs`. The store doesn't change. Its 35 s delay and catch-up run in sim time.
 - `TRAIL_MS` is sim time, so 5 minutes lasts 5 s on screen at 60x. The prototype used 15 minutes for the Norway view. Trail length scales with the speed toggle, tuned by eye.
 
 Tasks:
 
-- [ ] Recorder, then a weekday morning rush recording (07:00 to 09:00). Evening recordings are fine for development.
+- [x] Recorder, then a weekday morning rush recording (07:00 to 09:00). Evening recordings are fine for development.
+  - `2026-11-04-morning` ran 06:55 to 09:05: 1,703,571 records, 94 MB gzipped. It is the default recording. In headless Chromium it shows first vehicles after about 7 s, about 3,400 vehicles at once, and a JS heap of 865 to 930 MB (2 runs). The evening file uses 324 MB. Only 0.2% of records are exact repeats, so deduping them saves nothing.
+  - Open: the recording stays resident for the whole session. If the heap becomes a problem, interning repeated strings and keeping `arrivalMs` in a typed array are the next levers. Both change `Recording`.
 - [x] Sim clock and replay source with speed toggles (1x, 10x, 30x, 60x, 120x), looping over the recording
 - [x] Opening view on all of Norway, blue-black base, additive glowing dots and fading trails per mode
 - [x] Shapes at Norway scale: about 1000 journeys on load. Measure fetch count and time. If too slow, fetch rail and in-view vehicles first.
