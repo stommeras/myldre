@@ -11,6 +11,15 @@ const MODE_LABEL: Record<Mode, string> = {
   other: "annet",
 };
 
+function heading(journey: VehicleInfo["journey"]): string {
+  if (!journey) return "Ingen linje";
+  return journey.destination ? `${journey.line} ${journey.destination}` : journey.line;
+}
+
+function detail({ mode, journey }: VehicleInfo): string {
+  return journey ? `${MODE_LABEL[mode]} · ${formatDelay(journey.delaySeconds)}` : MODE_LABEL[mode];
+}
+
 /** Line, destination, delay, mode for the clicked vehicle. Hidden when `info` is null. */
 export function InfoCard(props: { info: VehicleInfo | null; onClose: () => void }) {
   return (
@@ -18,14 +27,8 @@ export function InfoCard(props: { info: VehicleInfo | null; onClose: () => void 
       {(info) => (
         <aside class="info-card">
           <button onClick={props.onClose} aria-label="Lukk">×</button>
-          <Show when={info().journey} fallback={<><h2>Ikke i trafikk</h2><p>{MODE_LABEL[info().mode]}</p></>}>
-            {(journey) => (
-              <>
-                <h2>{journey().destination ? `${journey().line} ${journey().destination}` : journey().line}</h2>
-                <p>{MODE_LABEL[info().mode]} · {formatDelay(journey().delaySeconds)}</p>
-              </>
-            )}
-          </Show>
+          <h2>{heading(info().journey)}</h2>
+          <p>{detail(info())}</p>
         </aside>
       )}
     </Show>
