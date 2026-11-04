@@ -1,7 +1,7 @@
-/** "+3 min", "on time", "-1 min". */
+/** "+3 min", "i rute", "-1 min". */
 export function formatDelay(seconds: number | null): string {
-  if (seconds === null) return "delay unknown";
+  if (seconds === null) return "ukjent forsinkelse";
   const minutes = Math.round(seconds / 60);
-  if (minutes === 0) return "on time";
+  if (minutes === 0) return "i rute";
   return minutes > 0 ? `+${minutes} min` : `${minutes} min`;
 }
