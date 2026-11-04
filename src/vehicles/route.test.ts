@@ -72,3 +72,14 @@ describe("prepareShape", () => {
     expect(prepareShape([])).toBeNull();
   });
 });
+
+describe("grill: long shapes (2026-11-04)", () => {
+  it("measures OFF_SHAPE_M in true metres at the far end of a long north-south shape", () => {
+    // Trondheim (63.43° N) to Bodø (67.28° N), like Nordlandsbanen, then 1 km east at Bodø.
+    const lat = 67.28;
+    const mPerDegLng = M_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180);
+    const far = prepareShape([[10.4, 63.43], [14.4, lat], [14.4 + 1000 / mPerDegLng, lat]])!;
+    // 35 m east of the last vertex, past the end of the shape, is within 40 m.
+    expect(passesNear(far, [14.4 + 1035 / mPerDegLng, lat], 0, Infinity)).toHaveLength(1);
+  });
+});

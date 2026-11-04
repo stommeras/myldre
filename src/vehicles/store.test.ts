@@ -858,3 +858,38 @@ describe("trail", () => {
     expect(s.frame(late).trails.filter((t) => t.id === V1)).toHaveLength(0);
   });
 });
+
+describe("grill: bad input and history batches (2026-11-04)", () => {
+  it("recovers within a minute from one GPS outlier 50 km away", async () => {
+    const s = newStore();
+    await receive(s, [at(0, 0, 0, null), at(10, 100, 0, null), at(20, 200, 0, null), at(30, 300, 0, null)]);
+    s.ingest([at(40, 50_000, 0, null)], 42_000);
+    for (let t = 50; t <= 240; t += 10) s.ingest([at(t, t * 10, 0, null)], t * 1000 + LATENCY);
+    // Real reports have been back for 190 s. The model should be near them, not still driving
+    // toward the outlier at the speed cap.
+    const [x] = xy(poseAt(s, 240_000)!.position);
+    expect(x).toBeLessThan(3_000);
+  });
+
+  it("does not let one report stamped an hour ahead freeze the vehicle", async () => {
+    const s = newStore();
+    await receive(s, [at(0, 0, 0, null), at(10, 100, 0, null)]);
+    s.ingest([at(3_600, 150, 0, null)], 22_000); // a clock or time zone bug on the vehicle
+    for (let t = 30; t <= 120; t += 10) s.ingest([at(t, t * 10, 0, null)], t * 1000 + LATENCY);
+    const [x] = xy(poseAt(s, 155_000)!.position);
+    expect(x).toBeGreaterThan(1_000); // the 120 s report, 1200 m, is reached at 155 s
+  });
+
+  it("does not crawl across a silence longer than STALE_MS inside one history batch", () => {
+    const s = newStore();
+    // 4 minutes of silence between 5 s and 245 s. Live, the vehicle hides after STALE_MS and
+    // reappears at (5000, 0). One history batch should not draw it crawling 5 km through the gap.
+    s.ingest([at(0, 0, 0, null), at(5, 50, 0, null), at(245, 5000, 0, null), at(255, 5100, 0, null)], 262_000);
+    for (let now = 262_000; now <= 290_000; now += 1_000) {
+      const pose = poseAt(s, now);
+      if (!pose) continue;
+      const [x] = xy(pose.position);
+      expect(x < 51 || x > 4999, `x at ${now} is ${Math.round(x)}`).toBe(true);
+    }
+  });
+});
