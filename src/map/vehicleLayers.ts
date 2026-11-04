@@ -23,6 +23,7 @@ const DOTS_ZOOM = 9;
 const MODELS_ZOOM = 11;
 const DOT_PX = { far: { zoom: 4.7, px: 1.6 }, near: { zoom: 11.6, px: 3 } };
 const HALO_SCALE = 4;
+const PICK_RADIUS_PX = 8;
 const TRAIL_WALL_MS = 15_000;
 const MIN_TRAIL_MS = 2 * 60_000;
 const DIM_AFTER_STILL_MS = 60_000;
@@ -54,8 +55,7 @@ export function attachVehicleLayers(
   const seconds = (epochMs: number) => (epochMs - t0) / 1000;
   const overlay = new MapLibreOverlay({
     interleaved: true,
-    // A dot is 1.6 px at Norway zoom. 8 px covers its glow: every click within 8 px of a dot hit, radius 4 missed at 6 px.
-    pickingRadius: 8,
+    pickingRadius: PICK_RADIUS_PX,
     layers: [],
     onClick: (info) => onPick((info.object as VehiclePose | undefined)?.id ?? null),
   });

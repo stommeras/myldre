@@ -1,4 +1,3 @@
-/** "+3 min", "i rute", "-1 min". */
 export function formatDelay(seconds: number | null): string {
   if (seconds === null) return "ukjent forsinkelse";
   const minutes = Math.round(seconds / 60);
