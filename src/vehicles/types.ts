@@ -19,7 +19,7 @@ export type Position3 = readonly [lng: number, lat: number, z: number];
 
 /**
  * Picks the 3D model. The glossary's four modes, plus `other` for everything without its own
- * model (tram, metro, ...). A `Record<Mode, ...>` in M3 makes a missing model a compile error.
+ * model (tram, metro, ...). The model table is a `Record<Mode, ...>`, so a missing model is a compile error.
  */
 export type Mode = "bus" | "coach" | "ferry" | "train" | "other";
 
