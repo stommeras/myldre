@@ -64,7 +64,7 @@ export function App() {
     if (live) {
       start(vehicleSource);
     } else {
-      const name = params.get("recording") ?? "2026-11-03-evening";
+      const name = params.get("recording") ?? "2026-11-04-morning";
       loadRecording(`/recordings/${name}.ndjson.gz`).then(
         (recording) => {
           if (unmounted) return;

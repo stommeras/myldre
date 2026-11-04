@@ -17,15 +17,15 @@ pnpm install
 pnpm dev
 ```
 
-Replay reads recordings from `public/recordings/`, which git ignores. Record one before the first run:
+Replay reads recordings from `public/recordings/`, which git ignores. Record one before the first run, starting at 06:55 on a weekday to catch the morning rush:
 
 ```sh
-node scripts/record.ts 30 public/recordings/2026-11-03-evening.ndjson.gz
+node scripts/record.ts 130 public/recordings/2026-11-04-morning.ndjson.gz
 ```
 
-The app loads `2026-11-03-evening` by default. These URL parameters change what it shows:
+The app loads `2026-11-04-morning` by default. These URL parameters change what it shows:
 
-- `?recording=<name>` plays `public/recordings/<name>.ndjson.gz` instead.
+- `?recording=<name>` plays `public/recordings/<name>.ndjson.gz` instead. `?recording=2026-11-03-evening` plays the shorter 30-minute evening file.
 - `?speed=<n>` starts at 1, 10, 30, 60 or 120 times real time. The default is 60.
 - `?live` shows live vehicles in Bergen instead of a replay. It stays as a debug view until the relay (M4) makes live a replay at 1x.
 
